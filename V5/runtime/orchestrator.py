@@ -7,6 +7,8 @@ from V5.runtime.allowlist import AllowlistState, BASE_ALLOWLIST, _is_exploit_fam
 from V5.runtime.command_suggest import has_autorun_template, suggest_command
 from V5.runtime.executor import run_step_if_allowed
 from V5.runtime.hitl import OperatorIO, ask_manual_outcome, ask_step_action, review_allowlist_for_path
+from V5.runtime.repair import SKIPPABLE_RECON_TOOLS, suggest_repaired_command
+from V5.runtime.wordlists import ensure_lab_wordlists
 from V5.runtime.models import AllowlistDecision, PathAttempt, RuntimeConfig, RuntimeSession, StepOutcome
 
 
@@ -195,12 +197,37 @@ class RuntimeOrchestrator:
                 # action == y
                 if mode == "auto":
                     timeout = self._timeout_for_step(step)
+                    if self.config.auto_execute and _normalize_tool(step.tool) == "hydra":
+                        users, passwords = ensure_lab_wordlists(use_llm=True)
+                        self.io.emit(f"  Hydra wordlists: -L {users} -P {passwords}")
                     result = run_step_if_allowed(
                         step,
                         self.allowlist,
                         timeout_seconds=timeout,
                         allow_auto_exploits=self.config.allow_auto_exploits,
                     )
+                    retries = 0
+                    while (
+                        not result.ok
+                        and retries < self.config.max_step_retries
+                        and self.config.auto_execute
+                    ):
+                        repaired = suggest_repaired_command(
+                            result.command,
+                            result.stdout_excerpt,
+                            result.stderr_excerpt or result.error,
+                        )
+                        if not repaired:
+                            break
+                        retries += 1
+                        self.io.emit(f"  Auto-repair retry {retries}: {repaired}")
+                        result = run_step_if_allowed(
+                            step,
+                            self.allowlist,
+                            timeout_seconds=timeout,
+                            allow_auto_exploits=self.config.allow_auto_exploits,
+                            command_override=repaired,
+                        )
                     if result.ok:
                         attempt.step_outcomes.append(
                             StepOutcome(
@@ -218,6 +245,32 @@ class RuntimeOrchestrator:
                                 exit_code=result.exit_code,
                                 stdout_excerpt=result.stdout_excerpt,
                             )
+                        )
+                    elif (
+                        self.config.auto_execute
+                        and self.config.skip_failed_recon
+                        and _normalize_tool(step.tool) in SKIPPABLE_RECON_TOOLS
+                    ):
+                        attempt.step_outcomes.append(
+                            StepOutcome(
+                                path_id=path.path_id,
+                                path_rank=rank,
+                                step_index=step.step_index,
+                                tool=step.tool,
+                                mode=mode,
+                                action="skip",
+                                status="skipped",
+                                suggested_command=suggest_command(
+                                    step, for_auto_exploit=self.config.allow_auto_exploits
+                                ),
+                                executed_command=result.command,
+                                exit_code=result.exit_code,
+                                operator_note=f"skipped_after_fail:{result.error}",
+                                stdout_excerpt=result.stderr_excerpt or result.stdout_excerpt,
+                            )
+                        )
+                        self.io.emit(
+                            f"  Recon tool {step.tool} failed; skipping and continuing the path."
                         )
                     else:
                         attempt.step_outcomes.append(
