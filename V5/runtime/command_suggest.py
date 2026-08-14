@@ -6,6 +6,7 @@ import os
 
 from V5.models import PathStep
 from V5.runtime.allowlist import _is_exploit_family, _normalize_tool
+from V5.runtime.wordlists import resolve_lab_wordlist
 
 # Tools for which we ship a deterministic auto-run template (non-exploit).
 TEMPLATED_AUTORUN_TOOLS: frozenset[str] = frozenset(
@@ -49,15 +50,26 @@ def suggest_command(step: PathStep, *, for_auto_exploit: bool = False) -> str:
     if tool == "wpscan":
         scheme = "https" if port in {443, 8443} else "http"
         port_part = f":{port}" if port else ""
-        return f"wpscan --url {scheme}://{ip}{port_part}/ --enumerate vp,vt --no-update"
+        return f"wpscan --url {scheme}://{ip}{port_part}/ --enumerate u,vp,vt"
 
     if tool == "hydra":
-        # Placeholder lists only — operator must ensure lab wordlists exist.
         hydra_mod = _hydra_module(step)
         hydra_port = _hydra_port(step, hydra_mod)
+        users = resolve_lab_wordlist("users")
+        passwords = resolve_lab_wordlist("passwords")
         port_flag = f"-s {hydra_port} " if hydra_port else ""
+        if hydra_mod in {"http-get", "https-get"}:
+            # Generic WP login form (lab). Bare http-get / does not brute a login.
+            form = (
+                '"/wp-login.php:log=^USER^&pwd=^PASS^:F=Invalid"'
+            )
+            hydra_mod = "http-post-form" if hydra_mod == "http-get" else "https-post-form"
+            return (
+                f"hydra {port_flag}-L {users} -P {passwords} {ip} {hydra_mod} {form} "
+                f"# REVIEW: lab wordlists"
+            )
         return (
-            f"hydra {port_flag}-L users.txt -P passwords.txt {ip} {hydra_mod} "
+            f"hydra {port_flag}-L {users} -P {passwords} {ip} {hydra_mod} "
             f"# REVIEW: lab wordlists required; promoted tools only"
         )
 

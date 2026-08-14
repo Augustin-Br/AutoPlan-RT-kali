@@ -19,6 +19,7 @@ def suggest_repaired_command(command: str | None, stdout: str | None, stderr: st
         users, passwords = ensure_lab_wordlists(use_llm=True)
         repaired = _replace_flag_value(repaired, "-P", passwords)
         repaired = _replace_flag_value(repaired, "-L", users)
+        return repaired.strip()
 
     if "database file is missing" in blob or "update required" in blob:
         repaired = repaired.replace(" --no-update", "").replace("--no-update", "")

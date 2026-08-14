@@ -6,8 +6,6 @@ import json
 import re
 from pathlib import Path
 
-from V5.runtime.command_suggest import resolve_lab_wordlist
-
 # Generic lab seeds only — not a target-specific writeup dump.
 SEED_USERS = (
     "admin",
@@ -31,6 +29,20 @@ SEED_PASSWORDS = (
     "elliot",
     "robot",
 )
+
+
+def resolve_lab_wordlist(kind: str) -> str:
+    """Pick an existing lab wordlist; keep the historical default name if none exist."""
+    if kind == "users":
+        candidates = ("users.txt", "user.txt", "usernames.txt")
+        fallback = "users.txt"
+    else:
+        candidates = ("passwords.txt", "password.txt", "pass.txt")
+        fallback = "passwords.txt"
+    for name in candidates:
+        if Path(name).is_file():
+            return name
+    return fallback
 
 
 def ensure_lab_wordlists(*, use_llm: bool = True) -> tuple[str, str]:
