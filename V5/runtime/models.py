@@ -68,3 +68,5 @@ class RuntimeConfig(BaseModel):
     auto_execute: bool = False
     allow_auto_exploits: bool = False
     auto_promote_missing_tools: bool = False
+    max_step_retries: int = 2
+    skip_failed_recon: bool = True

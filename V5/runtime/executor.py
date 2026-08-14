@@ -54,6 +54,7 @@ def run_step_if_allowed(
     *,
     timeout_seconds: int = 90,
     allow_auto_exploits: bool = False,
+    command_override: str | None = None,
 ) -> ExecResult:
     templated = has_autorun_template(step.tool, allow_auto_exploits=allow_auto_exploits)
     if not can_autorun(
@@ -67,7 +68,9 @@ def run_step_if_allowed(
     if not is_private_lab_target(step.target_ip):
         return ExecResult(ok=False, command=None, error="non_lab_target")
 
-    command = compile_autorun_command(step, allow_auto_exploits=allow_auto_exploits)
+    command = command_override or compile_autorun_command(
+        step, allow_auto_exploits=allow_auto_exploits
+    )
     if not command:
         return ExecResult(ok=False, command=None, error="no_template")
 

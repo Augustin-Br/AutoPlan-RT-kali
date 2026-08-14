@@ -207,9 +207,10 @@ class RuntimeOrchestrator:
                         allow_auto_exploits=self.config.allow_auto_exploits,
                     )
                     retries = 0
+                    max_retries = int(getattr(self.config, "max_step_retries", 2) or 0)
                     while (
                         not result.ok
-                        and retries < self.config.max_step_retries
+                        and retries < max_retries
                         and self.config.auto_execute
                     ):
                         repaired = suggest_repaired_command(
