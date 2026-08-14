@@ -6,7 +6,7 @@ import json
 import re
 
 from V5.models import PathStep
-from V5.runtime.adapt import AdaptDecision
+from V5.runtime.adapt import AdaptDecision, is_local_privesc
 from V5.runtime.allowlist import _normalize_tool
 from V5.runtime.command_suggest import has_autorun_template, module_needs_login_credentials
 from V5.runtime.world import WorldState
@@ -44,6 +44,7 @@ def propose_llm_decision(
         "Follow the remaining scenario toward root_access. Adapt if the last action failed.\n"
         "Prefer scenario exploit modules when credentials or a shell already exist.\n"
         "Never invent shell payloads. Never invent Metasploit module names. Never output a command line.\n"
+        "Never propose local privilege-escalation modules unless a shell session already exists.\n"
         f"World: {json.dumps(world.snapshot(), ensure_ascii=False)}\n"
         f"Remaining scenario tools: {[s.tool for s in remaining]}\n"
         f"Allowed tools: {allowed}\n"
@@ -71,6 +72,8 @@ def propose_llm_decision(
     if _normalize_tool(tool) in {"hydra"} and "hydra_pass" in world.tried and not world.credentials:
         return None
     if module_needs_login_credentials(tool) and not world.credentials:
+        return None
+    if is_local_privesc(tool) and not world.has_shell:
         return None
     if f"missing:{_normalize_tool(tool)}" in world.tried:
         return None

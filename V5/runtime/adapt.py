@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from V5.models import PathStep
 from V5.runtime.allowlist import _normalize_tool
 from V5.runtime.artifacts import http_url, local_name_for_path, wordlist_paths
-from V5.runtime.command_suggest import compile_hydra_command, module_needs_login_credentials
+from V5.runtime.command_suggest import (
+    compile_hydra_command,
+    module_needs_login_credentials,
+    normalize_target_uri,
+)
 from V5.runtime.world import WorldState
 
 
@@ -22,7 +26,7 @@ class AdaptDecision:
     # Local privesc runs only after has_shell (separate action — never chained).
     followup_module: str | None = None
     skip: bool = False
-    force_exploit: bool = False
+    skip_wpcheck: bool = False
 
 
 def scenario_needs_web_creds(plan: list[PathStep]) -> bool:
@@ -85,6 +89,19 @@ def choose_next(
             skip=True,
         )
 
+    if (
+        module_needs_login_credentials(step.tool)
+        and world.credentials
+        and "wp_probe" not in world.tried
+    ):
+        world.tried.add("wp_probe")
+        login_path = f"{normalize_target_uri(world.target_uri).rstrip('/')}/wp-login.php"
+        return _curl_decision(
+            world,
+            login_path,
+            note="confirm WordPress login surface before admin exploit",
+        )
+
     return AdaptDecision(
         step=step,
         note="follow scenario",
@@ -102,7 +119,7 @@ def _first_runnable(world: WorldState, remaining: list[PathStep]) -> tuple[int, 
             return index, step
         if module_needs_login_credentials(step.tool) and not world.credentials:
             continue
-        if _is_local_privesc(tool) and not world.has_shell:
+        if is_local_privesc(tool) and not world.has_shell:
             continue
         if f"missing:{_normalize_tool(step.tool)}" in world.tried:
             continue
@@ -112,8 +129,9 @@ def _first_runnable(world: WorldState, remaining: list[PathStep]) -> tuple[int, 
     return None
 
 
-def _is_local_privesc(tool: str) -> bool:
-    return tool.startswith(("exploit/linux/local/", "exploit/unix/local/")) or "nmap_interactive" in tool
+def is_local_privesc(tool: str) -> bool:
+    lowered = tool.lower()
+    return lowered.startswith(("exploit/linux/local/", "exploit/unix/local/")) or "nmap_interactive" in lowered
 
 
 def _curl_decision(

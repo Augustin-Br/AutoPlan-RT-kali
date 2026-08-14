@@ -5,7 +5,14 @@ from __future__ import annotations
 from V5.models import AttackPath, PathStep
 from V5.runtime.adapt import AdaptDecision, choose_next
 from V5.runtime.allowlist import AllowlistState, BASE_ALLOWLIST, _is_exploit_family, _normalize_tool, can_autorun
-from V5.runtime.command_suggest import has_autorun_template, module_needs_login_credentials, suggest_command
+from V5.runtime.command_suggest import (
+    WP_TARGETURI_CANDIDATES,
+    has_autorun_template,
+    module_needs_login_credentials,
+    next_wp_target_uri,
+    normalize_target_uri,
+    suggest_command,
+)
 from V5.runtime.executor import ExecResult, run_step_if_allowed
 from V5.runtime.hitl import OperatorIO, ask_manual_outcome, ask_step_action, review_allowlist_for_path
 from V5.runtime.llm_adapt import propose_llm_decision
@@ -517,7 +524,9 @@ class RuntimeOrchestrator:
             users, passwords = ensure_lab_wordlists(use_llm=True)
             self.io.emit(f"  Hydra wordlists: -L {users} -P {world.wordlist_path or passwords}")
         timeout = self._timeout_for_step(step)
-        force = bool(decision.force_exploit)
+        target_uri = normalize_target_uri(world.target_uri)
+        skip_wpcheck = bool(decision.skip_wpcheck)
+        world.tried.add(f"targeturi:{target_uri}")
         result = run_step_if_allowed(
             step,
             self.allowlist,
@@ -526,23 +535,38 @@ class RuntimeOrchestrator:
             command_override=decision.command_override,
             credentials=world.credentials or None,
             followup_module=None,
-            force_exploit=force,
+            target_uri=target_uri,
+            skip_wpcheck=skip_wpcheck,
         )
         retries = 0
         max_retries = int(getattr(self.config, "max_step_retries", 2) or 0)
-        while not result.ok and retries < max_retries:
+        # WP fingerprint failures get dedicated URI/WPCHECK retries beyond generic repairs.
+        wp_budget = 1 + len(
+            [candidate for candidate in WP_TARGETURI_CANDIDATES if candidate != target_uri]
+        )
+        while not result.ok and retries < max(max_retries, wp_budget if _needs_wp_bypass(result) else 0):
             repaired = suggest_repaired_command(
                 result.command,
                 result.stdout_excerpt,
                 result.stderr_excerpt or result.error,
             )
-            force_retry = force or _needs_msf_force(result)
-            if not repaired and not force_retry:
-                break
-            retries += 1
-            if force_retry and not force:
-                self.io.emit(f"  Auto-repair retry {retries}: MSF ForceExploit + TARGETURI=/")
-                force = True
+            if _needs_wp_bypass(result):
+                retries += 1
+                if not skip_wpcheck:
+                    skip_wpcheck = True
+                    self.io.emit(
+                        f"  Auto-repair retry {retries}: MSF WPCHECK false TARGETURI={target_uri}"
+                    )
+                else:
+                    nxt = next_wp_target_uri(target_uri, world.tried)
+                    if not nxt:
+                        break
+                    target_uri = nxt
+                    world.target_uri = nxt
+                    world.tried.add(f"targeturi:{nxt}")
+                    self.io.emit(
+                        f"  Auto-repair retry {retries}: MSF WPCHECK false TARGETURI={target_uri}"
+                    )
                 result = run_step_if_allowed(
                     step,
                     self.allowlist,
@@ -551,21 +575,25 @@ class RuntimeOrchestrator:
                     command_override=None,
                     credentials=world.credentials or None,
                     followup_module=None,
-                    force_exploit=True,
+                    target_uri=target_uri,
+                    skip_wpcheck=True,
                 )
                 continue
-            if repaired:
-                self.io.emit(f"  Auto-repair retry {retries}: {repaired}")
-                result = run_step_if_allowed(
-                    step,
-                    self.allowlist,
-                    timeout_seconds=timeout,
-                    allow_auto_exploits=self.config.allow_auto_exploits,
-                    command_override=repaired,
-                    credentials=world.credentials or None,
-                    followup_module=None,
-                    force_exploit=force,
-                )
+            if not repaired:
+                break
+            retries += 1
+            self.io.emit(f"  Auto-repair retry {retries}: {repaired}")
+            result = run_step_if_allowed(
+                step,
+                self.allowlist,
+                timeout_seconds=timeout,
+                allow_auto_exploits=self.config.allow_auto_exploits,
+                command_override=repaired,
+                credentials=world.credentials or None,
+                followup_module=None,
+                target_uri=target_uri,
+                skip_wpcheck=skip_wpcheck,
+            )
         status = "success" if result.ok else "fail"
         if (
             not result.ok
@@ -578,7 +606,8 @@ class RuntimeOrchestrator:
             for_auto_exploit=self.config.allow_auto_exploits,
             credentials=world.credentials or None,
             followup_module=None,
-            force_exploit=force,
+            target_uri=target_uri,
+            skip_wpcheck=skip_wpcheck,
         )
         outcome = StepOutcome(
             path_id=path_id,
@@ -642,6 +671,6 @@ def _consume_tool(remaining: list[PathStep], tool: str) -> None:
             return
 
 
-def _needs_msf_force(result: ExecResult) -> bool:
+def _needs_wp_bypass(result: ExecResult) -> bool:
     blob = f"{result.stdout_excerpt or ''}\n{result.error or ''}".lower()
     return "does not appear to be using wordpress" in blob

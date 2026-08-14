@@ -40,13 +40,39 @@ def has_autorun_template(tool: str, *, allow_auto_exploits: bool = False) -> boo
     return normalized in TEMPLATED_AUTORUN_TOOLS
 
 
+# Common WordPress install bases when the homepage fingerprint fails.
+WP_TARGETURI_CANDIDATES: tuple[str, ...] = ("/", "/wordpress/", "/wp/", "/blog/")
+
+
+def normalize_target_uri(uri: str | None) -> str:
+    text = (uri or "/").strip() or "/"
+    if not text.startswith("/"):
+        text = "/" + text
+    if text != "/" and not text.endswith("/"):
+        text += "/"
+    return text
+
+
+def next_wp_target_uri(current: str | None, tried: set[str]) -> str | None:
+    """Next unused WP base path after a fingerprint/abort failure."""
+    current_n = normalize_target_uri(current)
+    for candidate in WP_TARGETURI_CANDIDATES:
+        if candidate == current_n:
+            continue
+        if f"targeturi:{candidate}" in tried:
+            continue
+        return candidate
+    return None
+
+
 def suggest_command(
     step: PathStep,
     *,
     for_auto_exploit: bool = False,
     credentials: list[CredentialPair] | None = None,
     followup_module: str | None = None,
-    force_exploit: bool = False,
+    target_uri: str = "/",
+    skip_wpcheck: bool = False,
 ) -> str:
     tool = _normalize_tool(step.tool)
     ip = step.target_ip
@@ -97,7 +123,8 @@ def suggest_command(
             for_auto_exploit=for_auto_exploit,
             credentials=credentials,
             followup_module=None,
-            force_exploit=force_exploit,
+            target_uri=target_uri,
+            skip_wpcheck=skip_wpcheck,
         )
 
     if tool in {"john", "hashcat"}:
@@ -151,7 +178,8 @@ def compile_autorun_command(
     allow_auto_exploits: bool = False,
     credentials: list[CredentialPair] | None = None,
     followup_module: str | None = None,
-    force_exploit: bool = False,
+    target_uri: str = "/",
+    skip_wpcheck: bool = False,
 ) -> str | None:
     """Return an executable command string, or None if not auto-runnable."""
 
@@ -164,13 +192,18 @@ def compile_autorun_command(
             for_auto_exploit=True,
             credentials=credentials,
             followup_module=None,
-            force_exploit=force_exploit,
+            target_uri=target_uri,
+            skip_wpcheck=skip_wpcheck,
         )
 
     if not has_autorun_template(step.tool, allow_auto_exploits=allow_auto_exploits):
         return None
     suggested = suggest_command(
-        step, credentials=credentials, followup_module=None, force_exploit=force_exploit
+        step,
+        credentials=credentials,
+        followup_module=None,
+        target_uri=target_uri,
+        skip_wpcheck=skip_wpcheck,
     )
     # Strip review comments for execution
     command = suggested.split("#", 1)[0].strip()
@@ -235,7 +268,8 @@ def _msfconsole_command(
     for_auto_exploit: bool,
     credentials: list[CredentialPair] | None,
     followup_module: str | None = None,
-    force_exploit: bool = False,
+    target_uri: str = "/",
+    skip_wpcheck: bool = False,
 ) -> str:
     """Build msfconsole -x. Never chain local privesc here — only after a live session."""
     del followup_module  # kept for call-site compat; chaining is forbidden
@@ -246,14 +280,15 @@ def _msfconsole_command(
     if lhost:
         statements.append(f"set LHOST {lhost}")
     if _is_web_msf_module(module):
-        statements.append("set TARGETURI /")
+        statements.append(f"set TARGETURI {normalize_target_uri(target_uri)}")
     if credentials and module_needs_login_credentials(module):
         username, password = credentials[0]
         statements.append(f"set USERNAME {_msf_literal(username)}")
         statements.append(f"set PASSWORD {_msf_literal(password)}")
-    if force_exploit:
-        statements.append("set ForceExploit true")
-    else:
+    # ForceExploit is unknown on many MSF builds; WPCHECK is the WordPress mixin knob.
+    if skip_wpcheck and _is_wordpress_msf_module(module):
+        statements.append("set WPCHECK false")
+    elif not skip_wpcheck:
         statements.append("check")
     if for_auto_exploit:
         statements.append("run")
@@ -267,6 +302,11 @@ def _msfconsole_command(
 def _is_web_msf_module(module: str) -> bool:
     lowered = module.lower()
     return any(token in lowered for token in ("/http/", "/webapp/", "wordpress", "wp_", "multi/http"))
+
+
+def _is_wordpress_msf_module(module: str) -> bool:
+    lowered = module.lower()
+    return "wordpress" in lowered or "wp_" in lowered or "wp-" in lowered
 
 
 def _msf_literal(value: str) -> str:

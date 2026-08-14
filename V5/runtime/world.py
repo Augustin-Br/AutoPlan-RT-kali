@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from V5.runtime.artifacts import parse_robots_paths, uniquify_wordlist
-from V5.runtime.command_suggest import CredentialPair
+from V5.runtime.command_suggest import CredentialPair, normalize_target_uri
 from V5.runtime.executor import ExecResult
 
 
@@ -21,6 +21,7 @@ class WorldState:
     wordlist_path: str | None = None
     valid_users: list[str] = field(default_factory=list)
     credentials: list[CredentialPair] = field(default_factory=list)
+    target_uri: str = "/"
     has_shell: bool = False
     has_root: bool = False
     tried: set[str] = field(default_factory=set)
@@ -40,6 +41,7 @@ class WorldState:
             "wordlist_path": self.wordlist_path,
             "valid_users": list(self.valid_users),
             "credential_count": len(self.credentials),
+            "target_uri": self.target_uri,
             "has_shell": self.has_shell,
             "has_root": self.has_root,
             "tried": sorted(self.tried),
@@ -62,6 +64,14 @@ def ingest_result(world: WorldState, command: str | None, result: ExecResult) ->
             world.add_fact("robots:" + ",".join(world.robots_paths))
         else:
             world.add_fact("robots:empty")
+
+    if "wp-login.php" in cmd.lower() and "hydra" not in cmd.lower():
+        if _looks_like_wordpress(out):
+            world.add_fact("cms:wordpress")
+            base = _wordpress_base_from_body(out) or _wordpress_base_from_login_url(cmd)
+            if base:
+                world.target_uri = normalize_target_uri(base)
+                world.add_fact(f"target_uri:{world.target_uri}")
 
     output_file = _curl_output_file(cmd)
     if output_file:
@@ -98,3 +108,44 @@ def _curl_output_file(command: str) -> str | None:
     if not match:
         return None
     return match.group(1)
+
+
+def _looks_like_wordpress(body: str) -> bool:
+    blob = body.lower()
+    markers = (
+        "wordpress",
+        "wp-submit",
+        "user_login",
+        "wp-login",
+        "login_error",
+        "wp-content",
+        "wp-includes",
+    )
+    return any(marker in blob for marker in markers)
+
+
+def _wordpress_base_from_login_url(command: str) -> str | None:
+    match = re.search(r"https?://[^/\s]+(/[^?\s]*?)wp-login\.php", command, flags=re.I)
+    if not match:
+        return None
+    base = match.group(1) or "/"
+    return base if base.endswith("/") else base + "/"
+
+
+def _wordpress_base_from_body(body: str) -> str | None:
+    match = re.search(
+        r"""(?:action|href)=["']([^"']*?)wp-login\.php""",
+        body,
+        flags=re.I,
+    )
+    if not match:
+        return None
+    path = match.group(1) or "/"
+    if path.startswith("http"):
+        path_match = re.search(r"https?://[^/]+(/[^?\s]*?)(?:wp-login\.php)?$", path, flags=re.I)
+        path = path_match.group(1) if path_match else "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    if "wp-login" in path.lower():
+        path = path.lower().split("wp-login", 1)[0]
+    return path if path.endswith("/") else path + "/"
