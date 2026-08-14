@@ -10,19 +10,32 @@ UNIQUE_WORDLIST_NAME = "lab_wordlist.uniq.txt"
 
 
 def parse_robots_paths(body: str | None) -> list[str]:
+    """Extract URL paths from robots.txt, including non-standard bare filenames."""
     if not body:
         return []
     paths: list[str] = []
     seen: set[str] = set()
+    skip_prefixes = ("user-agent:", "sitemap:", "comment:", "#")
     for raw in body.splitlines():
         line = raw.strip()
-        if not line.lower().startswith("disallow:"):
+        if not line:
             continue
-        path = line.split(":", 1)[1].strip().split()[0]
-        if not path.startswith("/") or path in seen:
+        lowered = line.lower()
+        if lowered.startswith(skip_prefixes):
             continue
-        seen.add(path)
-        paths.append(path)
+        if ":" in line and lowered.split(":", 1)[0] in {"disallow", "allow"}:
+            token = line.split(":", 1)[1].strip().split()[0]
+        else:
+            token = line.split()[0]
+        token = token.strip()
+        if not token or token == "/":
+            continue
+        if not token.startswith("/"):
+            token = "/" + token
+        if token in seen:
+            continue
+        seen.add(token)
+        paths.append(token)
     return paths
 
 
