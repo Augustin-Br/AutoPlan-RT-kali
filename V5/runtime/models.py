@@ -72,6 +72,7 @@ class RuntimeConfig(BaseModel):
     skip_failed_recon: bool = True
     # Per-action observe/adapt loop (auto_execute). Default off so HITL tests stay linear.
     adapt: bool = False
-    max_actions: int = 18
+    # 0 = unlimited adaptive actions (stop on root / no next action / exhausted).
+    max_actions: int = 0
     hydra_timeout_seconds: int = 1500
     use_llm_adapt: bool = True

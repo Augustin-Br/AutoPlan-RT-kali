@@ -25,6 +25,7 @@ class WorldState:
     has_root: bool = False
     tried: set[str] = field(default_factory=set)
     last_error: str | None = None
+    last_stdout: str | None = None
 
     def add_fact(self, fact: str) -> None:
         if fact and fact not in self.facts:
@@ -51,6 +52,7 @@ def ingest_result(world: WorldState, command: str | None, result: ExecResult) ->
     world.last_error = result.error
     cmd = command or result.command or ""
     out = result.stdout_excerpt or ""
+    world.last_stdout = out
     blob = out.lower()
 
     if "robots.txt" in cmd:
@@ -84,6 +86,11 @@ def ingest_result(world: WorldState, command: str | None, result: ExecResult) ->
     if "uid=0" in blob or "got root" in blob or "session 2 opened" in blob:
         world.has_root = True
         world.add_fact("root_access")
+
+    missing = re.search(r"failed to load module:\s*(\S+)", blob)
+    if missing:
+        world.tried.add(f"missing:{missing.group(1).lower()}")
+
 
 
 def _curl_output_file(command: str) -> str | None:

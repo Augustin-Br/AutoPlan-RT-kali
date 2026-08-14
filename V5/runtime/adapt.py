@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from V5.models import PathStep
-from V5.runtime.allowlist import _is_exploit_family, _normalize_tool
+from V5.runtime.allowlist import _normalize_tool
 from V5.runtime.artifacts import http_url, local_name_for_path, wordlist_paths
 from V5.runtime.command_suggest import compile_hydra_command, module_needs_login_credentials
 from V5.runtime.world import WorldState
@@ -19,23 +19,15 @@ class AdaptDecision:
     source: str = "plan"
     consumes_plan: bool = False
     consume_tool: str | None = None
+    # Local privesc runs only after has_shell (separate action — never chained).
     followup_module: str | None = None
     skip: bool = False
+    force_exploit: bool = False
 
 
 def scenario_needs_web_creds(plan: list[PathStep]) -> bool:
     tools = {_normalize_tool(step.tool) for step in plan}
     return "hydra" in tools or any(module_needs_login_credentials(tool) for tool in tools)
-
-
-def remaining_local_module(plan: list[PathStep]) -> str | None:
-    for step in plan:
-        tool = _normalize_tool(step.tool)
-        if tool.startswith(("exploit/linux/local/", "exploit/unix/local/")):
-            return step.tool
-        if "nmap_interactive" in tool:
-            return step.tool
-    return None
 
 
 def choose_next(
@@ -45,6 +37,7 @@ def choose_next(
     last_error: str | None = None,
 ) -> AdaptDecision | None:
     """Deterministic next action. None → caller may ask the LLM or stop."""
+    del last_error  # world.last_error / last_stdout carry failure context
     if world.has_root:
         return None
 
@@ -79,41 +72,26 @@ def choose_next(
 
     runnable = _first_runnable(world, remaining)
     if runnable is None:
-        if world.credentials and not world.has_shell and "wp_admin" not in world.tried:
-            world.tried.add("wp_admin")
-            step = PathStep(
-                step_index=99,
-                tool="exploit/unix/webapp/wp_admin_shell_upload",
-                tool_type="exploit_framework",
-                target_ip=world.target_ip,
-                port=world.port or 80,
-                service="HTTP",
-                produces_fact="shell_access",
-            )
-            return AdaptDecision(
-                step=step,
-                note="adapt: credentials in hand, attempt WP admin shell",
-                source="policy",
-                followup_module=remaining_local_module(remaining)
-                or "exploit/linux/local/nmap_interactive_suid",
-            )
         return None
 
-    index, step = runnable
+    _index, step = runnable
     tool = _normalize_tool(step.tool)
     if tool == "hydra":
-        return AdaptDecision(step=step, note="drop frozen hydra (adaptive hydra already ran)", source="skip", consumes_plan=True, skip=True)
+        return AdaptDecision(
+            step=step,
+            note="drop frozen hydra (adaptive hydra already ran)",
+            source="skip",
+            consumes_plan=True,
+            skip=True,
+        )
 
-    followup = None
-    if module_needs_login_credentials(step.tool):
-        followup = remaining_local_module(remaining[index + 1 :])
     return AdaptDecision(
         step=step,
         note="follow scenario",
         source="plan",
         consumes_plan=True,
         consume_tool=step.tool,
-        followup_module=followup,
+        followup_module=None,
     )
 
 
@@ -125,6 +103,10 @@ def _first_runnable(world: WorldState, remaining: list[PathStep]) -> tuple[int, 
         if module_needs_login_credentials(step.tool) and not world.credentials:
             continue
         if _is_local_privesc(tool) and not world.has_shell:
+            continue
+        if f"missing:{_normalize_tool(step.tool)}" in world.tried:
+            continue
+        if f"done:{_normalize_tool(step.tool)}" in world.tried:
             continue
         return index, step
     return None

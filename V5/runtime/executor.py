@@ -69,6 +69,7 @@ def run_step_if_allowed(
     command_override: str | None = None,
     credentials: list[CredentialPair] | None = None,
     followup_module: str | None = None,
+    force_exploit: bool = False,
 ) -> ExecResult:
     templated = has_autorun_template(step.tool, allow_auto_exploits=allow_auto_exploits)
     if not can_autorun(
@@ -86,7 +87,8 @@ def run_step_if_allowed(
         step,
         allow_auto_exploits=allow_auto_exploits,
         credentials=credentials,
-        followup_module=followup_module,
+        followup_module=None,
+        force_exploit=force_exploit,
     )
     if not command:
         return ExecResult(ok=False, command=None, error="no_template")

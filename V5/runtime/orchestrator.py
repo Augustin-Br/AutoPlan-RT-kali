@@ -406,15 +406,19 @@ class RuntimeOrchestrator:
         )
         self.io.emit(
             f"\n=== Adaptive loop on {primary.path_id} "
-            f"(max_actions={self.config.max_actions}) ==="
+            f"(max_actions={'unlimited' if not getattr(self.config, 'max_actions', 0) else self.config.max_actions}) ==="
         )
         self.io.emit(f"  scenario: {' -> '.join(step.tool for step in remaining)}")
 
         extra_paths = list(paths[1:])
-        llm_tries = 0
-        max_actions = int(getattr(self.config, "max_actions", 18) or 18)
+        max_actions = int(getattr(self.config, "max_actions", 0) or 0)
+        action_index = 0
 
-        for action_index in range(1, max_actions + 1):
+        while True:
+            action_index += 1
+            if max_actions > 0 and action_index > max_actions:
+                self.io.emit(f"  Reached max_actions={max_actions}.")
+                break
             if world.has_root:
                 break
             decision = choose_next(world, remaining, last_error=world.last_error)
@@ -423,23 +427,26 @@ class RuntimeOrchestrator:
                 self.io.emit(f"  Merge tools from fallback path {nxt.path_id}")
                 remaining.extend(nxt.steps)
                 decision = choose_next(world, remaining, last_error=world.last_error)
-            if decision is None and getattr(self.config, "use_llm_adapt", True) and llm_tries < 3:
-                llm_tries += 1
+            if decision is None and getattr(self.config, "use_llm_adapt", True):
                 decision = propose_llm_decision(
                     world,
                     remaining,
                     allow_auto_exploits=self.config.allow_auto_exploits,
                 )
                 if decision:
-                    self.io.emit(f"  LLM adapt: {decision.step.tool} ({decision.note})")
+                    key = f"llm:{_normalize_tool(decision.step.tool)}"
+                    if key in world.tried:
+                        self.io.emit(f"  LLM repeated {decision.step.tool}; stopping adapt proposals for it.")
+                        decision = None
+                    else:
+                        world.tried.add(key)
+                        self.io.emit(f"  LLM adapt: {decision.step.tool} ({decision.note})")
             if decision is None:
                 self.io.emit("  No further adaptive action.")
                 break
 
             if decision.consumes_plan:
                 _consume_tool(remaining, decision.step.tool)
-            if decision.followup_module:
-                _consume_tool(remaining, decision.followup_module)
             if decision.skip:
                 attempt.step_outcomes.append(
                     StepOutcome(
@@ -455,8 +462,9 @@ class RuntimeOrchestrator:
                 )
                 continue
 
+            budget = f"{action_index}" if max_actions <= 0 else f"{action_index}/{max_actions}"
             self.io.emit(
-                f"\n[adapt {action_index}/{max_actions} {decision.source}] "
+                f"\n[adapt {budget} {decision.source}] "
                 f"{decision.step.tool} — {decision.note}"
             )
             if not self.allowlist.contains(decision.step.tool):
@@ -509,6 +517,7 @@ class RuntimeOrchestrator:
             users, passwords = ensure_lab_wordlists(use_llm=True)
             self.io.emit(f"  Hydra wordlists: -L {users} -P {world.wordlist_path or passwords}")
         timeout = self._timeout_for_step(step)
+        force = bool(decision.force_exploit)
         result = run_step_if_allowed(
             step,
             self.allowlist,
@@ -516,7 +525,8 @@ class RuntimeOrchestrator:
             allow_auto_exploits=self.config.allow_auto_exploits,
             command_override=decision.command_override,
             credentials=world.credentials or None,
-            followup_module=decision.followup_module,
+            followup_module=None,
+            force_exploit=force,
         )
         retries = 0
         max_retries = int(getattr(self.config, "max_step_retries", 2) or 0)
@@ -526,19 +536,36 @@ class RuntimeOrchestrator:
                 result.stdout_excerpt,
                 result.stderr_excerpt or result.error,
             )
-            if not repaired:
+            force_retry = force or _needs_msf_force(result)
+            if not repaired and not force_retry:
                 break
             retries += 1
-            self.io.emit(f"  Auto-repair retry {retries}: {repaired}")
-            result = run_step_if_allowed(
-                step,
-                self.allowlist,
-                timeout_seconds=timeout,
-                allow_auto_exploits=self.config.allow_auto_exploits,
-                command_override=repaired,
-                credentials=world.credentials or None,
-                followup_module=decision.followup_module,
-            )
+            if force_retry and not force:
+                self.io.emit(f"  Auto-repair retry {retries}: MSF ForceExploit + TARGETURI=/")
+                force = True
+                result = run_step_if_allowed(
+                    step,
+                    self.allowlist,
+                    timeout_seconds=timeout,
+                    allow_auto_exploits=self.config.allow_auto_exploits,
+                    command_override=None,
+                    credentials=world.credentials or None,
+                    followup_module=None,
+                    force_exploit=True,
+                )
+                continue
+            if repaired:
+                self.io.emit(f"  Auto-repair retry {retries}: {repaired}")
+                result = run_step_if_allowed(
+                    step,
+                    self.allowlist,
+                    timeout_seconds=timeout,
+                    allow_auto_exploits=self.config.allow_auto_exploits,
+                    command_override=repaired,
+                    credentials=world.credentials or None,
+                    followup_module=None,
+                    force_exploit=force,
+                )
         status = "success" if result.ok else "fail"
         if (
             not result.ok
@@ -550,7 +577,8 @@ class RuntimeOrchestrator:
             step,
             for_auto_exploit=self.config.allow_auto_exploits,
             credentials=world.credentials or None,
-            followup_module=decision.followup_module,
+            followup_module=None,
+            force_exploit=force,
         )
         outcome = StepOutcome(
             path_id=path_id,
@@ -612,3 +640,8 @@ def _consume_tool(remaining: list[PathStep], tool: str) -> None:
         if _normalize_tool(step.tool) == key:
             remaining.pop(index)
             return
+
+
+def _needs_msf_force(result: ExecResult) -> bool:
+    blob = f"{result.stdout_excerpt or ''}\n{result.error or ''}".lower()
+    return "does not appear to be using wordpress" in blob

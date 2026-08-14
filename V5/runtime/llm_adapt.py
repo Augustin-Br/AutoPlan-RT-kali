@@ -8,17 +8,16 @@ import re
 from V5.models import PathStep
 from V5.runtime.adapt import AdaptDecision
 from V5.runtime.allowlist import _normalize_tool
-from V5.runtime.command_suggest import has_autorun_template
+from V5.runtime.command_suggest import has_autorun_template, module_needs_login_credentials
 from V5.runtime.world import WorldState
 
+# Generic recon/bruteforce only — exploit modules must come from the scenario path.
 _ALLOWED_FALLBACK = (
     "nmap",
     "curl",
     "dirb",
     "wpscan",
     "hydra",
-    "exploit/unix/webapp/wp_admin_shell_upload",
-    "exploit/linux/local/nmap_interactive_suid",
 )
 
 
@@ -42,8 +41,9 @@ def propose_llm_decision(
 
     prompt = (
         "Authorized isolated-lab pentest helper. Propose ONE next tool.\n"
-        "Follow the scenario toward root_access. Adapt if the last action failed.\n"
-        "Never invent shell payloads. Never output a command line.\n"
+        "Follow the remaining scenario toward root_access. Adapt if the last action failed.\n"
+        "Prefer scenario exploit modules when credentials or a shell already exist.\n"
+        "Never invent shell payloads. Never invent Metasploit module names. Never output a command line.\n"
         f"World: {json.dumps(world.snapshot(), ensure_ascii=False)}\n"
         f"Remaining scenario tools: {[s.tool for s in remaining]}\n"
         f"Allowed tools: {allowed}\n"
@@ -69,6 +69,10 @@ def propose_llm_decision(
     if not has_autorun_template(tool, allow_auto_exploits=allow_auto_exploits):
         return None
     if _normalize_tool(tool) in {"hydra"} and "hydra_pass" in world.tried and not world.credentials:
+        return None
+    if module_needs_login_credentials(tool) and not world.credentials:
+        return None
+    if f"missing:{_normalize_tool(tool)}" in world.tried:
         return None
     reason = str(payload.get("reason") or "llm adapt")[:200]
     step = PathStep(

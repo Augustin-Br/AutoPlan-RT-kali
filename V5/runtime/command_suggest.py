@@ -46,6 +46,7 @@ def suggest_command(
     for_auto_exploit: bool = False,
     credentials: list[CredentialPair] | None = None,
     followup_module: str | None = None,
+    force_exploit: bool = False,
 ) -> str:
     tool = _normalize_tool(step.tool)
     ip = step.target_ip
@@ -95,7 +96,8 @@ def suggest_command(
             port,
             for_auto_exploit=for_auto_exploit,
             credentials=credentials,
-            followup_module=followup_module,
+            followup_module=None,
+            force_exploit=force_exploit,
         )
 
     if tool in {"john", "hashcat"}:
@@ -149,6 +151,7 @@ def compile_autorun_command(
     allow_auto_exploits: bool = False,
     credentials: list[CredentialPair] | None = None,
     followup_module: str | None = None,
+    force_exploit: bool = False,
 ) -> str | None:
     """Return an executable command string, or None if not auto-runnable."""
 
@@ -160,12 +163,15 @@ def compile_autorun_command(
             step,
             for_auto_exploit=True,
             credentials=credentials,
-            followup_module=followup_module,
+            followup_module=None,
+            force_exploit=force_exploit,
         )
 
     if not has_autorun_template(step.tool, allow_auto_exploits=allow_auto_exploits):
         return None
-    suggested = suggest_command(step, credentials=credentials, followup_module=followup_module)
+    suggested = suggest_command(
+        step, credentials=credentials, followup_module=None, force_exploit=force_exploit
+    )
     # Strip review comments for execution
     command = suggested.split("#", 1)[0].strip()
     if not command:
@@ -229,29 +235,38 @@ def _msfconsole_command(
     for_auto_exploit: bool,
     credentials: list[CredentialPair] | None,
     followup_module: str | None = None,
+    force_exploit: bool = False,
 ) -> str:
+    """Build msfconsole -x. Never chain local privesc here — only after a live session."""
+    del followup_module  # kept for call-site compat; chaining is forbidden
     statements = [f"use {module}", f"set RHOSTS {ip}"]
     if port:
         statements.append(f"set RPORT {port}")
     lhost = os.environ.get("AUTOPLAN_LHOST", "").strip()
     if lhost:
         statements.append(f"set LHOST {lhost}")
+    if _is_web_msf_module(module):
+        statements.append("set TARGETURI /")
     if credentials and module_needs_login_credentials(module):
         username, password = credentials[0]
         statements.append(f"set USERNAME {_msf_literal(username)}")
         statements.append(f"set PASSWORD {_msf_literal(password)}")
-    statements.append("check")
+    if force_exploit:
+        statements.append("set ForceExploit true")
+    else:
+        statements.append("check")
     if for_auto_exploit:
         statements.append("run")
-        if followup_module:
-            statements.append(f"use {followup_module}")
-            statements.append("set SESSION 1")
-            statements.append("run")
         statements.append("exit")
     script = "; ".join(statements)
     if for_auto_exploit:
         return f"msfconsole -q -x {shlex.quote(script)}"
     return f"msfconsole -q -x {shlex.quote(script)} # run manually after review"
+
+
+def _is_web_msf_module(module: str) -> bool:
+    lowered = module.lower()
+    return any(token in lowered for token in ("/http/", "/webapp/", "wordpress", "wp_", "multi/http"))
 
 
 def _msf_literal(value: str) -> str:
