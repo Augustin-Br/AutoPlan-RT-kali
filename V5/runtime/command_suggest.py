@@ -54,7 +54,8 @@ def suggest_command(step: PathStep, *, for_auto_exploit: bool = False) -> str:
     if tool == "hydra":
         # Placeholder lists only — operator must ensure lab wordlists exist.
         hydra_mod = _hydra_module(step)
-        port_flag = f"-s {port} " if port else ""
+        hydra_port = _hydra_port(step, hydra_mod)
+        port_flag = f"-s {hydra_port} " if hydra_port else ""
         return (
             f"hydra {port_flag}-L users.txt -P passwords.txt {ip} {hydra_mod} "
             f"# REVIEW: lab wordlists required; promoted tools only"
@@ -104,6 +105,23 @@ def _hydra_module(step: PathStep) -> str:
     if port in {80, 8080}:
         return "http-get"
     return service or "ssh"
+
+
+def _hydra_port(step: PathStep, hydra_mod: str) -> int | None:
+    """Ignore LLM port/service mismatches (e.g. HTTP hydra on 22)."""
+    if hydra_mod in {"http-get", "http-post-form", "http-head"}:
+        if step.port in {80, 8080, 8000}:
+            return step.port
+        return 80
+    if hydra_mod in {"https-get", "https-post-form"}:
+        if step.port in {443, 8443}:
+            return step.port
+        return 443
+    if hydra_mod == "ssh":
+        return 22 if step.port in {None, 22} else step.port
+    if hydra_mod == "ftp":
+        return 21 if step.port in {None, 21} else step.port
+    return step.port
 
 
 def compile_autorun_command(step: PathStep, *, allow_auto_exploits: bool = False) -> str | None:
