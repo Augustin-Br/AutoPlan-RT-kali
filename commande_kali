@@ -3,7 +3,7 @@ set -euo pipefail
 cd /home/lade/Documents/AutoPlan-RT-kali
 source .venv/bin/activate
 export PYTHONPATH=.
-export HOME=/home/lade
+export HOME="${HOME:-/home/lade}"
 export AUTOPLAN_LHOST="192.168.1.10"
 
 TARGET_IP="192.168.2.12"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from V2.recon_policy import is_private_lab_target
 from V5.models import PathStep
 from V5.runtime.allowlist import AllowlistState, _is_exploit_family, _normalize_tool, can_autorun
-from V5.runtime.command_suggest import compile_autorun_command, has_autorun_template
+from V5.runtime.command_suggest import CredentialPair, compile_autorun_command, has_autorun_template
 
 # Always blocked even when allow_auto_exploits (no reverse-shell helpers).
 _ALWAYS_FORBIDDEN = (
@@ -27,6 +28,15 @@ _EXPLOIT_TOKENS = (
     "msfvenom",
     "sqlmap",
 )
+
+_HYDRA_LOGIN_RE = re.compile(r"login:\s+(\S+)\s+password:\s+(\S+)", re.IGNORECASE)
+HYDRA_MAX_UNIQUE_CREDENTIALS = 3
+
+
+def _tail_excerpt(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
 
 
 def runtime_command_is_safe(command: str, *, allow_auto_exploits: bool = False) -> bool:
@@ -46,6 +56,7 @@ class ExecResult:
     stdout_excerpt: str | None = None
     stderr_excerpt: str | None = None
     error: str | None = None
+    credentials: list[CredentialPair] | None = None
 
 
 def run_step_if_allowed(
@@ -55,6 +66,7 @@ def run_step_if_allowed(
     timeout_seconds: int = 90,
     allow_auto_exploits: bool = False,
     command_override: str | None = None,
+    credentials: list[CredentialPair] | None = None,
 ) -> ExecResult:
     templated = has_autorun_template(step.tool, allow_auto_exploits=allow_auto_exploits)
     if not can_autorun(
@@ -69,7 +81,7 @@ def run_step_if_allowed(
         return ExecResult(ok=False, command=None, error="non_lab_target")
 
     command = command_override or compile_autorun_command(
-        step, allow_auto_exploits=allow_auto_exploits
+        step, allow_auto_exploits=allow_auto_exploits, credentials=credentials
     )
     if not command:
         return ExecResult(ok=False, command=None, error="no_template")
@@ -106,23 +118,29 @@ def run_step_if_allowed(
     except OSError as exc:
         return ExecResult(ok=False, command=command, error=str(exc))
 
-    stdout = (completed.stdout or "")[:2000]
-    stderr = (completed.stderr or "")[:500]
+    full_stdout = completed.stdout or ""
+    full_stderr = completed.stderr or ""
     error = classify_command_result(
         command,
         returncode=completed.returncode,
-        stdout=stdout,
-        stderr=stderr,
+        stdout=full_stdout,
+        stderr=full_stderr,
     )
     ok = error is None
+    hydra_creds = parse_hydra_credentials(full_stdout) if argv0_of(command) == "hydra" else None
     return ExecResult(
         ok=ok,
         command=command,
         exit_code=completed.returncode,
-        stdout_excerpt=stdout or None,
-        stderr_excerpt=stderr or None,
+        stdout_excerpt=_tail_excerpt(full_stdout, 2000) or None,
+        stderr_excerpt=_tail_excerpt(full_stderr, 500) or None,
         error=error,
+        credentials=hydra_creds or None,
     )
+
+
+def argv0_of(command: str | None) -> str:
+    return (command or "").strip().split(" ", 1)[0].lower()
 
 
 _MSF_FAIL_MARKERS = (
@@ -150,7 +168,9 @@ def classify_command_result(
     """
     blob = f"{stdout or ''}\n{stderr or ''}".lower()
     argv0 = (command or "").strip().split(" ", 1)[0].lower()
-    is_msf = "msfconsole" in (command or "").lower() or "exploit/" in (command or "").lower()
+    command_l = (command or "").lower()
+    is_msf = "msfconsole" in command_l
+    is_aux = "auxiliary/" in command_l
 
     if returncode not in {0, None}:
         return f"exit:{returncode}"
@@ -159,7 +179,7 @@ def classify_command_result(
         if marker in blob:
             return f"unsuccessful:{marker}"
 
-    if is_msf:
+    if is_msf and not is_aux:
         if "session opened" not in blob and "meterpreter session" not in blob:
             return "msf_no_session"
 
@@ -167,7 +187,28 @@ def classify_command_result(
         if "open" not in blob and ("filtered" in blob or "closed" in blob or "0 hosts up" in blob):
             return "nmap_no_open_ports"
 
-    if argv0 == "hydra" and ("0 valid passwords found" in blob or "there is no service" in blob):
-        return "hydra_no_credentials"
+    if argv0 == "hydra":
+        if "there is no service" in blob:
+            return "hydra_no_credentials"
+        creds = parse_hydra_credentials(stdout)
+        if len(creds) > HYDRA_MAX_UNIQUE_CREDENTIALS:
+            return "hydra_false_positives"
+        if not creds:
+            return "hydra_no_credentials"
 
     return None
+
+
+def parse_hydra_credentials(stdout: str | None) -> list[CredentialPair]:
+    """Unique (user, password) pairs Hydra reported as valid."""
+    if not stdout:
+        return []
+    seen: set[CredentialPair] = set()
+    out: list[CredentialPair] = []
+    for match in _HYDRA_LOGIN_RE.finditer(stdout):
+        pair = (match.group(1), match.group(2))
+        if pair in seen:
+            continue
+        seen.add(pair)
+        out.append(pair)
+    return out

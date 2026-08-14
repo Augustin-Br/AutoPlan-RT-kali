@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from V5.models import AttackPath, PathStep
 from V5.runtime.allowlist import AllowlistState, BASE_ALLOWLIST, _is_exploit_family, _normalize_tool, can_autorun
-from V5.runtime.command_suggest import has_autorun_template, suggest_command
+from V5.runtime.command_suggest import has_autorun_template, module_needs_login_credentials, suggest_command
 from V5.runtime.executor import run_step_if_allowed
 from V5.runtime.hitl import OperatorIO, ask_manual_outcome, ask_step_action, review_allowlist_for_path
 from V5.runtime.repair import SKIPPABLE_RECON_TOOLS, suggest_repaired_command
@@ -91,6 +91,7 @@ class RuntimeOrchestrator:
             )
             blocked = False
             aborted = False
+            path_credentials: list[tuple[str, str]] = []
 
             for step in path.steps:
                 templated = has_autorun_template(
@@ -196,6 +197,33 @@ class RuntimeOrchestrator:
 
                 # action == y
                 if mode == "auto":
+                    if (
+                        self.config.auto_execute
+                        and module_needs_login_credentials(step.tool)
+                        and not path_credentials
+                    ):
+                        attempt.step_outcomes.append(
+                            StepOutcome(
+                                path_id=path.path_id,
+                                path_rank=rank,
+                                step_index=step.step_index,
+                                tool=step.tool,
+                                mode=mode,
+                                action=action,
+                                status="fail",
+                                suggested_command=suggest_command(
+                                    step, for_auto_exploit=self.config.allow_auto_exploits
+                                ),
+                                operator_note="missing_credentials",
+                            )
+                        )
+                        blocked = True
+                        attempt.reason = "missing_credentials"
+                        self.io.emit(
+                            f"  {step.tool} needs USERNAME/PASSWORD from Hydra; "
+                            "no accepted credentials — next path."
+                        )
+                        break
                     timeout = self._timeout_for_step(step)
                     if self.config.auto_execute and _normalize_tool(step.tool) == "hydra":
                         users, passwords = ensure_lab_wordlists(use_llm=True)
@@ -205,6 +233,7 @@ class RuntimeOrchestrator:
                         self.allowlist,
                         timeout_seconds=timeout,
                         allow_auto_exploits=self.config.allow_auto_exploits,
+                        credentials=path_credentials or None,
                     )
                     retries = 0
                     max_retries = int(getattr(self.config, "max_step_retries", 2) or 0)
@@ -228,8 +257,14 @@ class RuntimeOrchestrator:
                             timeout_seconds=timeout,
                             allow_auto_exploits=self.config.allow_auto_exploits,
                             command_override=repaired,
+                            credentials=path_credentials or None,
                         )
                     if result.ok:
+                        if result.credentials:
+                            path_credentials = list(result.credentials)
+                            self.io.emit(
+                                f"  Hydra accepted {len(path_credentials)} unique credential pair(s)"
+                            )
                         attempt.step_outcomes.append(
                             StepOutcome(
                                 path_id=path.path_id,
@@ -240,7 +275,9 @@ class RuntimeOrchestrator:
                                 action=action,
                                 status="success",
                                 suggested_command=suggest_command(
-                                    step, for_auto_exploit=self.config.allow_auto_exploits
+                                    step,
+                                    for_auto_exploit=self.config.allow_auto_exploits,
+                                    credentials=path_credentials or None,
                                 ),
                                 executed_command=result.command,
                                 exit_code=result.exit_code,
@@ -249,7 +286,7 @@ class RuntimeOrchestrator:
                         )
                     elif (
                         self.config.auto_execute
-                        and self.config.skip_failed_recon
+                        and getattr(self.config, "skip_failed_recon", True)
                         and _normalize_tool(step.tool) in SKIPPABLE_RECON_TOOLS
                     ):
                         attempt.step_outcomes.append(
@@ -371,6 +408,7 @@ class RuntimeOrchestrator:
         return decisions
 
     def _timeout_for_step(self, step: PathStep) -> int:
-        if _is_exploit_family(_normalize_tool(step.tool)):
+        tool = _normalize_tool(step.tool)
+        if _is_exploit_family(tool) or tool == "hydra":
             return max(self.config.timeout_seconds, self.config.exploit_timeout_seconds)
         return self.config.timeout_seconds
