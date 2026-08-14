@@ -70,3 +70,8 @@ class RuntimeConfig(BaseModel):
     auto_promote_missing_tools: bool = False
     max_step_retries: int = 2
     skip_failed_recon: bool = True
+    # Per-action observe/adapt loop (auto_execute). Default off so HITL tests stay linear.
+    adapt: bool = False
+    max_actions: int = 18
+    hydra_timeout_seconds: int = 1500
+    use_llm_adapt: bool = True

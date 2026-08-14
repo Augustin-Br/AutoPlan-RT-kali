@@ -342,6 +342,7 @@ def main(argv: list[str] | None = None) -> int:
                 auto_execute=bool(args.auto_execute),
                 allow_auto_exploits=bool(args.allow_auto_exploits),
                 auto_promote_missing_tools=bool(args.auto_execute),
+                adapt=bool(args.auto_execute),
             ),
         ).run(result.ranked_paths)
         result.trace["runtime"] = runtime_session.model_dump(mode="json")

@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         auto_execute=bool(args.auto_execute),
         allow_auto_exploits=bool(args.allow_auto_exploits),
         auto_promote_missing_tools=bool(args.auto_execute),
+        adapt=bool(args.auto_execute),
     )
     paths = load_ranked_paths(args.from_result)
     session = RuntimeOrchestrator(io, config=config).run(paths)

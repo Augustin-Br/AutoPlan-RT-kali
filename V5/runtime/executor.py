@@ -57,6 +57,7 @@ class ExecResult:
     stderr_excerpt: str | None = None
     error: str | None = None
     credentials: list[CredentialPair] | None = None
+    usernames: list[str] | None = None
 
 
 def run_step_if_allowed(
@@ -67,6 +68,7 @@ def run_step_if_allowed(
     allow_auto_exploits: bool = False,
     command_override: str | None = None,
     credentials: list[CredentialPair] | None = None,
+    followup_module: str | None = None,
 ) -> ExecResult:
     templated = has_autorun_template(step.tool, allow_auto_exploits=allow_auto_exploits)
     if not can_autorun(
@@ -81,7 +83,10 @@ def run_step_if_allowed(
         return ExecResult(ok=False, command=None, error="non_lab_target")
 
     command = command_override or compile_autorun_command(
-        step, allow_auto_exploits=allow_auto_exploits, credentials=credentials
+        step,
+        allow_auto_exploits=allow_auto_exploits,
+        credentials=credentials,
+        followup_module=followup_module,
     )
     if not command:
         return ExecResult(ok=False, command=None, error="no_template")
@@ -128,6 +133,10 @@ def run_step_if_allowed(
     )
     ok = error is None
     hydra_creds = parse_hydra_credentials(full_stdout) if argv0_of(command) == "hydra" else None
+    usernames = None
+    if hydra_creds and _is_hydra_user_enum(command):
+        usernames = [user for user, _password in hydra_creds]
+        hydra_creds = None
     return ExecResult(
         ok=ok,
         command=command,
@@ -136,11 +145,16 @@ def run_step_if_allowed(
         stderr_excerpt=_tail_excerpt(full_stderr, 500) or None,
         error=error,
         credentials=hydra_creds or None,
+        usernames=usernames,
     )
 
 
 def argv0_of(command: str | None) -> str:
     return (command or "").strip().split(" ", 1)[0].lower()
+
+
+def _is_hydra_user_enum(command: str | None) -> bool:
+    return "f=invalid username" in (command or "").lower()
 
 
 _MSF_FAIL_MARKERS = (
@@ -175,13 +189,15 @@ def classify_command_result(
     if returncode not in {0, None}:
         return f"exit:{returncode}"
 
-    for marker in _MSF_FAIL_MARKERS:
-        if marker in blob:
-            return f"unsuccessful:{marker}"
-
-    if is_msf and not is_aux:
-        if "session opened" not in blob and "meterpreter session" not in blob:
-            return "msf_no_session"
+    if is_msf:
+        if "session opened" in blob or "meterpreter session" in blob:
+            return None
+        for marker in _MSF_FAIL_MARKERS:
+            if marker in blob:
+                return f"unsuccessful:{marker}"
+        if is_aux:
+            return None
+        return "msf_no_session"
 
     if argv0 == "nmap":
         if "open" not in blob and ("filtered" in blob or "closed" in blob or "0 hosts up" in blob):
@@ -191,6 +207,12 @@ def classify_command_result(
         if "there is no service" in blob:
             return "hydra_no_credentials"
         creds = parse_hydra_credentials(stdout)
+        if _is_hydra_user_enum(command):
+            if len(creds) > 5:
+                return "hydra_false_positives"
+            if not creds:
+                return "hydra_no_usernames"
+            return None
         if len(creds) > HYDRA_MAX_UNIQUE_CREDENTIALS:
             return "hydra_false_positives"
         if not creds:

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from V5.models import AttackPath, PathStep
+from V5.runtime.adapt import AdaptDecision, choose_next
 from V5.runtime.allowlist import AllowlistState, BASE_ALLOWLIST, _is_exploit_family, _normalize_tool, can_autorun
 from V5.runtime.command_suggest import has_autorun_template, module_needs_login_credentials, suggest_command
-from V5.runtime.executor import run_step_if_allowed
+from V5.runtime.executor import ExecResult, run_step_if_allowed
 from V5.runtime.hitl import OperatorIO, ask_manual_outcome, ask_step_action, review_allowlist_for_path
+from V5.runtime.llm_adapt import propose_llm_decision
 from V5.runtime.repair import SKIPPABLE_RECON_TOOLS, suggest_repaired_command
 from V5.runtime.wordlists import ensure_lab_wordlists
+from V5.runtime.world import WorldState, ingest_result
 from V5.runtime.models import AllowlistDecision, PathAttempt, RuntimeConfig, RuntimeSession, StepOutcome
 
 
@@ -50,6 +53,9 @@ class RuntimeOrchestrator:
         )
 
         auto_promote = self.config.auto_promote_missing_tools or self.config.auto_execute
+
+        if self.config.auto_execute and getattr(self.config, "adapt", False):
+            return self._run_adaptive(paths, session)
 
         for rank, path in enumerate(paths, start=1):
             chain = " -> ".join(step.tool for step in path.steps)
@@ -379,6 +385,189 @@ class RuntimeOrchestrator:
         session.stop_reason = "paths_exhausted"
         return session
 
+    def _run_adaptive(self, paths: list[AttackPath], session: RuntimeSession) -> RuntimeSession:
+        """Follow the top scenario, adapting after each action toward root."""
+        primary = paths[0]
+        remaining = list(primary.steps)
+        decisions: list[AllowlistDecision] = []
+        for rank, path in enumerate(paths, start=1):
+            decisions.extend(self._auto_promote_path(path, path_rank=rank))
+        session.session_allowlist = sorted(self.allowlist.session)
+        session.trace["adapt"] = True
+
+        target_ip = remaining[0].target_ip if remaining else "127.0.0.1"
+        port = (remaining[0].port or 80) if remaining else 80
+        world = WorldState(target_ip=target_ip, port=port)
+        attempt = PathAttempt(
+            path_id=primary.path_id,
+            path_rank=1,
+            status="blocked",
+            allowlist_decisions=decisions,
+        )
+        self.io.emit(
+            f"\n=== Adaptive loop on {primary.path_id} "
+            f"(max_actions={self.config.max_actions}) ==="
+        )
+        self.io.emit(f"  scenario: {' -> '.join(step.tool for step in remaining)}")
+
+        extra_paths = list(paths[1:])
+        llm_tries = 0
+        max_actions = int(getattr(self.config, "max_actions", 18) or 18)
+
+        for action_index in range(1, max_actions + 1):
+            if world.has_root:
+                break
+            decision = choose_next(world, remaining, last_error=world.last_error)
+            if decision is None and extra_paths:
+                nxt = extra_paths.pop(0)
+                self.io.emit(f"  Merge tools from fallback path {nxt.path_id}")
+                remaining.extend(nxt.steps)
+                decision = choose_next(world, remaining, last_error=world.last_error)
+            if decision is None and getattr(self.config, "use_llm_adapt", True) and llm_tries < 3:
+                llm_tries += 1
+                decision = propose_llm_decision(
+                    world,
+                    remaining,
+                    allow_auto_exploits=self.config.allow_auto_exploits,
+                )
+                if decision:
+                    self.io.emit(f"  LLM adapt: {decision.step.tool} ({decision.note})")
+            if decision is None:
+                self.io.emit("  No further adaptive action.")
+                break
+
+            if decision.consumes_plan:
+                _consume_tool(remaining, decision.step.tool)
+            if decision.followup_module:
+                _consume_tool(remaining, decision.followup_module)
+            if decision.skip:
+                attempt.step_outcomes.append(
+                    StepOutcome(
+                        path_id=primary.path_id,
+                        path_rank=1,
+                        step_index=action_index,
+                        tool=decision.step.tool,
+                        mode="auto",
+                        action="skip",
+                        status="skipped",
+                        operator_note=decision.note,
+                    )
+                )
+                continue
+
+            self.io.emit(
+                f"\n[adapt {action_index}/{max_actions} {decision.source}] "
+                f"{decision.step.tool} — {decision.note}"
+            )
+            if not self.allowlist.contains(decision.step.tool):
+                self.allowlist.promote(decision.step.tool)
+            outcome, result = self._autorun_adaptive_step(
+                primary.path_id,
+                action_index,
+                decision,
+                world,
+            )
+            attempt.step_outcomes.append(outcome)
+            ingest_result(world, result.command if result else None, result)
+            if world.has_root:
+                break
+
+        attempt.reason = (
+            "root_access"
+            if world.has_root
+            else ("shell_access" if world.has_shell else (world.last_error or "adapted_exhausted"))
+        )
+        if world.has_root:
+            attempt.status = "success"
+            session.successful_path_id = primary.path_id
+            session.stop_reason = "root_access"
+        elif world.has_shell:
+            attempt.status = "success"
+            session.successful_path_id = primary.path_id
+            session.stop_reason = "shell_access"
+        else:
+            attempt.status = "blocked"
+            session.stop_reason = "paths_exhausted"
+        session.attempts.append(attempt)
+        session.session_allowlist = sorted(self.allowlist.session)
+        session.trace["world"] = world.snapshot()
+        self.io.emit(
+            f"  Adaptive stop={session.stop_reason} facts={world.facts} "
+            f"shell={world.has_shell} root={world.has_root}"
+        )
+        return session
+
+    def _autorun_adaptive_step(
+        self,
+        path_id: str,
+        action_index: int,
+        decision: AdaptDecision,
+        world: WorldState,
+    ) -> tuple[StepOutcome, ExecResult]:
+        step = decision.step
+        if _normalize_tool(step.tool) == "hydra":
+            users, passwords = ensure_lab_wordlists(use_llm=True)
+            self.io.emit(f"  Hydra wordlists: -L {users} -P {world.wordlist_path or passwords}")
+        timeout = self._timeout_for_step(step)
+        result = run_step_if_allowed(
+            step,
+            self.allowlist,
+            timeout_seconds=timeout,
+            allow_auto_exploits=self.config.allow_auto_exploits,
+            command_override=decision.command_override,
+            credentials=world.credentials or None,
+            followup_module=decision.followup_module,
+        )
+        retries = 0
+        max_retries = int(getattr(self.config, "max_step_retries", 2) or 0)
+        while not result.ok and retries < max_retries:
+            repaired = suggest_repaired_command(
+                result.command,
+                result.stdout_excerpt,
+                result.stderr_excerpt or result.error,
+            )
+            if not repaired:
+                break
+            retries += 1
+            self.io.emit(f"  Auto-repair retry {retries}: {repaired}")
+            result = run_step_if_allowed(
+                step,
+                self.allowlist,
+                timeout_seconds=timeout,
+                allow_auto_exploits=self.config.allow_auto_exploits,
+                command_override=repaired,
+                credentials=world.credentials or None,
+                followup_module=decision.followup_module,
+            )
+        status = "success" if result.ok else "fail"
+        if (
+            not result.ok
+            and getattr(self.config, "skip_failed_recon", True)
+            and _normalize_tool(step.tool) in SKIPPABLE_RECON_TOOLS
+        ):
+            status = "skipped"
+        suggested = decision.command_override or suggest_command(
+            step,
+            for_auto_exploit=self.config.allow_auto_exploits,
+            credentials=world.credentials or None,
+            followup_module=decision.followup_module,
+        )
+        outcome = StepOutcome(
+            path_id=path_id,
+            path_rank=1,
+            step_index=action_index,
+            tool=step.tool,
+            mode="auto",
+            action="y",
+            status=status,
+            suggested_command=suggested,
+            executed_command=result.command,
+            exit_code=result.exit_code,
+            operator_note=result.error or decision.note,
+            stdout_excerpt=result.stdout_excerpt,
+        )
+        return outcome, result
+
     def _auto_promote_path(self, path: AttackPath, *, path_rank: int) -> list[AllowlistDecision]:
         promoted = self.allowlist.promote_missing_from_path(path)
         decisions: list[AllowlistDecision] = []
@@ -409,6 +598,17 @@ class RuntimeOrchestrator:
 
     def _timeout_for_step(self, step: PathStep) -> int:
         tool = _normalize_tool(step.tool)
-        if _is_exploit_family(tool) or tool == "hydra":
+        if tool == "hydra":
+            hydra_timeout = int(getattr(self.config, "hydra_timeout_seconds", 1500) or 1500)
+            return max(self.config.timeout_seconds, hydra_timeout)
+        if _is_exploit_family(tool):
             return max(self.config.timeout_seconds, self.config.exploit_timeout_seconds)
         return self.config.timeout_seconds
+
+
+def _consume_tool(remaining: list[PathStep], tool: str) -> None:
+    key = _normalize_tool(tool)
+    for index, step in enumerate(remaining):
+        if _normalize_tool(step.tool) == key:
+            remaining.pop(index)
+            return
