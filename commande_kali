@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd /home/lade/Documents/AutoPlan-RT-kali
+source .venv/bin/activate
+export PYTHONPATH=.
+export HOME=/home/lade
+export AUTOPLAN_LHOST="192.168.1.10"
+
+TARGET_IP="192.168.2.12"
+INFRA="V5/benchmarks/infras/lade_mrrobot_v5.json"
+
+mkdir -p outputs/mrrobot
+
+python -m V5.cli \
+  --infra "$INFRA" \
+  --target-ip "$TARGET_IP" \
+  --objective "Authorized lab: obtain foothold/root on MrRobot WordPress lab VM" \
+  --execute-recon --recon-level 1 \
+  --scan-tools nmap,curl,dirb,wpscan \
+  --enable-llm --llm-provider google \
+  --strategy balanced --top-k 5 \
+  --execute-paths --auto-execute --allow-auto-exploits \
+  --i-understand-lab-only \
+  --runtime-timeout 300 \
+  --output outputs/mrrobot/v5_agent.json \
+  --runtime-output outputs/mrrobot/v5_runtime.json \
+  --infra-output outputs/mrrobot/v5_infra_enriched.json
+
+echo DONE

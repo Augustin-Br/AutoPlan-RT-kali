@@ -1,0 +1,47 @@
+{
+  "entreprise": "UQO_LADE_Workzone_Shopping",
+  "reseaux": [
+    {
+      "nom": "Net1",
+      "sous_reseau": "192.168.1.0/24"
+    },
+    {
+      "nom": "Net2",
+      "sous_reseau": "192.168.2.0/24"
+    }
+  ],
+  "machines": [
+    {
+      "id": "shopping",
+      "ip": "192.168.2.10",
+      "zone": "Net2",
+      "os": "Linux (container/lab)",
+      "services": [
+        {
+          "port": 80,
+          "service": "HTTP",
+          "version": "nginx 1.26.3",
+          "cve": null,
+          "notes": "Observed via LADE scenario APRT_path1_recon (2026-08-12): nmap 80/tcp open http nginx 1.26.3; curl -I HTTP/1.1 200 OK; Server nginx/1.26.3; X-Powered-By PHP/8.3.19; PHPSESSID cookie set. Training host Bundle Shopping Website.",
+          "service_observations": "Observed via LADE scenario APRT_path1_recon (2026-08-12): nmap 80/tcp open http nginx 1.26.3; curl -I HTTP/1.1 200 OK; Server nginx/1.26.3; X-Powered-By PHP/8.3.19; PHPSESSID cookie set. Training host Bundle Shopping Website."
+        }
+      ]
+    }
+  ],
+  "attaquant": {
+    "ip_machine_ecoute": "192.168.1.10"
+  },
+  "scenario_objective": "Draft plausible web recon and follow-up paths against the LADE Shopping Website for instructor-reviewed cyber-range training.",
+  "apt_profile": "lab_training_script_kiddie",
+  "attack_objective": "Identify and draft plausible attack scenarios against the authorized LADE shopping web host (no live exploitation required for drafting).",
+  "security_notes": "Topo LADE: kali 192.168.1.10 (Net1) -- router -- shopping 192.168.2.10 (Net2). First AutoPlan-RT→LADE bridge validated with nmap+curl scenario.",
+  "network_policies": [
+    {
+      "from_zone": "Net1",
+      "to_zone": "Net2",
+      "allowed_ports": [80],
+      "deny_all_else": false,
+      "description": "Router forwards between Net1 and Net2; HTTP to shopping observed reachable from kali."
+    }
+  ]
+}

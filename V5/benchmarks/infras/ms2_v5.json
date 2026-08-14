@@ -1,0 +1,99 @@
+{
+  "entreprise": "V4_Benchmark_MS2",
+  "reseaux": [
+    {
+      "nom": "LAN_lab",
+      "sous_reseau": "192.168.56.0/24"
+    }
+  ],
+  "machines": [
+    {
+      "id": "ms2",
+      "ip": "192.168.56.114",
+      "zone": "LAN_lab",
+      "os": "Linux ancien de laboratoire",
+      "services": [
+        {
+          "port": 21,
+          "service": "FTP",
+          "version": "vsftpd 2.3.4",
+          "cve": "CVE-2011-2523",
+          "notes": "vsftpd 2.3.4 FTP service observed; known lab backdoor vector exploit/unix/ftp/vsftpd_234_backdoor.",
+          "service_observations": "vsftpd 2.3.4 FTP service observed; known lab backdoor vector exploit/unix/ftp/vsftpd_234_backdoor."
+        },
+        {
+          "port": 22,
+          "service": "SSH",
+          "version": "OpenSSH 4.7p1 Debian 8ubuntu1",
+          "cve": null,
+          "notes": "SSH banner observed; supporting reconnaissance only.",
+          "service_observations": "SSH banner observed; supporting reconnaissance only."
+        },
+        {
+          "port": 80,
+          "service": "HTTP",
+          "version": "Apache 2.2.8 (Ubuntu)",
+          "cve": null,
+          "notes": "Apache HTTP surface observed with phpMyAdmin path /phpMyAdmin/ and general web administration exposure. No grounded /phpinfo evidence in the freeze note.",
+          "service_observations": "Apache HTTP surface observed with phpMyAdmin path /phpMyAdmin/ and general web administration exposure. No grounded /phpinfo evidence in the freeze note."
+        },
+        {
+          "port": 139,
+          "service": "Samba",
+          "version": "Samba 3.0.20-Debian",
+          "cve": "CVE-2007-2447",
+          "notes": "Samba 3.0.20 service observed on NetBIOS/SMB; username map script CVE-2007-2447 is the expected primary exploit/multi/samba/usermap_script vector.",
+          "service_observations": "Samba 3.0.20 service observed on NetBIOS/SMB; username map script CVE-2007-2447 is the expected primary exploit/multi/samba/usermap_script vector."
+        },
+        {
+          "port": 445,
+          "service": "Samba",
+          "version": "Samba 3.0.20-Debian",
+          "cve": "CVE-2007-2447",
+          "notes": "Samba 3.0.20 service observed on SMB; username map script CVE-2007-2447 is an expected high-confidence service exploit vector.",
+          "service_observations": "Samba 3.0.20 service observed on SMB; username map script CVE-2007-2447 is an expected high-confidence service exploit vector."
+        },
+        {
+          "port": 6667,
+          "service": "IRC",
+          "version": "UnrealIRCd 3.2.8.1",
+          "cve": null,
+          "notes": "UnrealIRCd service observed; known lab backdoor vector exploit/unix/irc/unreal_ircd_3281_backdoor is a secondary candidate.",
+          "service_observations": "UnrealIRCd service observed; known lab backdoor vector exploit/unix/irc/unreal_ircd_3281_backdoor is a secondary candidate."
+        },
+        {
+          "port": 8180,
+          "service": "HTTP",
+          "version": "Apache Tomcat/Coyote",
+          "cve": null,
+          "notes": "Tomcat-related web paths are observed on port 8180; manager exposure requires manual validation.",
+          "service_observations": "Tomcat-related web paths are observed on port 8180; manager exposure requires manual validation."
+        }
+      ]
+    }
+  ],
+  "attaquant": {
+    "ip_machine_ecoute": "192.168.56.1"
+  },
+  "scenario_objective": "Identify symbolic root access paths on the lab host without executing commands.",
+  "apt_profile": "V4 static benchmark generated from V3.5 freeze notes.",
+  "attack_objective": "Identify symbolic root access paths on the lab host without executing commands.",
+  "security_notes": "Lab environment: symbolic scenario generation only; no live execution. Documented service observations are training evidence, not live telemetry.",
+  "network_policies": [
+    {
+      "from_zone": "WAN",
+      "to_zone": "LAN_lab",
+      "allowed_ports": [
+        21,
+        22,
+        80,
+        443,
+        139,
+        445,
+        3306
+      ],
+      "deny_all_else": true,
+      "description": "Default lab reachability policy (migrated from V4)."
+    }
+  ]
+}

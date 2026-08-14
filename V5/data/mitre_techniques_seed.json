@@ -1,0 +1,16 @@
+{
+  "version": "v5-seed-1",
+  "techniques": [
+    {"id": "T1046", "name": "Network Service Discovery", "tactics": ["Discovery"], "requires_prior": [], "typical_tools": ["nmap", "ssh", "ftp"]},
+    {"id": "T1110", "name": "Brute Force", "tactics": ["Credential Access"], "requires_prior": ["network_access"], "typical_tools": ["hydra"]},
+    {"id": "T1110.001", "name": "Password Guessing", "tactics": ["Credential Access"], "requires_prior": ["login_surface"], "typical_tools": ["hydra"]},
+    {"id": "T1110.002", "name": "Password Cracking", "tactics": ["Credential Access"], "requires_prior": ["credential_material"], "typical_tools": ["john", "hashcat"]},
+    {"id": "T1190", "name": "Exploit Public-Facing Application", "tactics": ["Initial Access"], "requires_prior": ["service_intelligence"], "typical_tools": ["msfconsole", "exploit/unix/ftp/vsftpd_234_backdoor", "exploit/multi/samba/usermap_script"]},
+    {"id": "T1068", "name": "Exploitation for Privilege Escalation", "tactics": ["Privilege Escalation"], "requires_prior": ["user_access"], "typical_tools": ["msfconsole"]},
+    {"id": "T1083", "name": "File and Directory Discovery", "tactics": ["Discovery"], "requires_prior": ["network_access"], "typical_tools": ["curl", "gobuster"]},
+    {"id": "T1595", "name": "Active Scanning", "tactics": ["Reconnaissance"], "requires_prior": [], "typical_tools": ["nmap", "curl"]},
+    {"id": "T1595.002", "name": "Vulnerability Scanning", "tactics": ["Reconnaissance"], "requires_prior": ["service_intelligence"], "typical_tools": ["wpscan", "nikto"]},
+    {"id": "T1021.002", "name": "SMB/Windows Admin Shares", "tactics": ["Lateral Movement"], "requires_prior": ["credentials"], "typical_tools": ["smbclient"]},
+    {"id": "T1105", "name": "Ingress Tool Transfer", "tactics": ["Command and Control"], "requires_prior": ["user_access"], "typical_tools": ["nc"]}
+  ]
+}

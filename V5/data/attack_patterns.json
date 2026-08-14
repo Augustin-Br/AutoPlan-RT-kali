@@ -1,0 +1,15 @@
+{
+  "version": "v5-seed-1",
+  "patterns": [
+    {"id": "recon_then_exploit", "sequence": ["scanner", "exploit_framework"], "description": "Service discovery before exploitation", "weight": 1.0},
+    {"id": "banner_then_exploit", "sequence": ["enumeration", "exploit_framework"], "description": "Banner check before targeted exploit", "weight": 0.9},
+    {"id": "web_enum_then_exploit", "sequence": ["enumeration", "exploit_framework"], "tool_sequence": ["curl", "wpscan", "sqlmap"], "description": "Web enumeration before web exploit", "weight": 0.85},
+    {"id": "bruteforce_after_login_surface", "sequence": ["enumeration", "bruteforce"], "description": "Login surface observed before brute force", "weight": 0.8},
+    {"id": "hash_crack_after_discovery", "sequence": ["enumeration", "credential"], "description": "Credential material before offline cracking", "weight": 0.75},
+    {"id": "nmap_hydra_ftp", "tool_sequence": ["nmap", "hydra"], "description": "Classic scan then hydra pattern", "weight": 0.7},
+    {"id": "wordpress_web_chain", "tool_sequence": ["curl", "hydra", "exploit/multi/http/wp_crop_rce"], "description": "WordPress surface to RCE", "weight": 0.85},
+    {"id": "wordpress_post_exploit", "tool_sequence": ["john", "ssh", "exploit/unix/local/setuid_nmap"], "description": "Hash crack, SSH login, SUID nmap privesc", "weight": 0.9},
+    {"id": "shell_to_privesc", "sequence": ["exploit_framework", "credential", "bruteforce", "exploit_framework"], "description": "Initial access then credential recovery then privesc", "weight": 0.8},
+    {"id": "web_to_ssh_privesc", "tool_sequence": ["curl", "exploit/multi/http/wp_crop_rce", "john", "ssh"], "description": "Web exploit then lateral SSH after hash crack", "weight": 0.82}
+  ]
+}

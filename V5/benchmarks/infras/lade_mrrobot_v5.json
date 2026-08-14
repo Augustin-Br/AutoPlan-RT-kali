@@ -1,0 +1,84 @@
+{
+  "entreprise": "UQO_LADE_MrRobot",
+  "reseaux": [
+    {
+      "nom": "Net1",
+      "sous_reseau": "192.168.1.0/24"
+    },
+    {
+      "nom": "Net2",
+      "sous_reseau": "192.168.2.0/24"
+    }
+  ],
+  "machines": [
+    {
+      "id": "mrrobot",
+      "ip": "192.168.2.12",
+      "zone": "Net2",
+      "os": "Linux (Ubuntu-based VulnHub Mr-Robot:1 lab)",
+      "services": [
+        {
+          "port": 80,
+          "service": "HTTP",
+          "version": "Apache httpd / WordPress 4.3.x",
+          "cve": null,
+          "notes": "VulnHub Mr-Robot:1 writeup consensus (e.g. christophetd, abatchy, common walkthroughs): HTTP landing page; robots.txt exposes /fsocity.dic (large custom wordlist, many duplicates) and /key-1-of-3.txt (flag1). WordPress CMS with /wp-login.php and /wp-admin/; readme.html indicates WordPress ~4.3.x; theme twentyfifteen often observed. Nikto/dirb typically surface wp-login and WordPress paths. Login form distinguishes invalid username vs bad password (useful for username then password enumeration with fsocity.dic). Documented CTF chain often finds WP user 'elliot'. XML-RPC may be enabled. No claim that credentials are present in this JSON as live secrets—treat as lab training evidence aligned with public writeups.",
+          "service_observations": "VulnHub Mr-Robot:1 writeup consensus (e.g. christophetd, abatchy, common walkthroughs): HTTP landing page; robots.txt exposes /fsocity.dic (large custom wordlist, many duplicates) and /key-1-of-3.txt (flag1). WordPress CMS with /wp-login.php and /wp-admin/; readme.html indicates WordPress ~4.3.x; theme twentyfifteen often observed. Nikto/dirb typically surface wp-login and WordPress paths. Login form distinguishes invalid username vs bad password (useful for username then password enumeration with fsocity.dic). Documented CTF chain often finds WP user 'elliot'. XML-RPC may be enabled. No claim that credentials are present in this JSON as live secrets—treat as lab training evidence aligned with public writeups."
+        },
+        {
+          "port": 443,
+          "service": "HTTPS",
+          "version": "Apache httpd (SSL)",
+          "cve": null,
+          "notes": "HTTPS mirrors the HTTP WordPress application; self-signed / example CN often observed. Same robots.txt and WP paths as port 80.",
+          "service_observations": "HTTPS mirrors the HTTP WordPress application; self-signed / example CN often observed. Same robots.txt and WP paths as port 80."
+        },
+        {
+          "port": 22,
+          "service": "SSH",
+          "version": "OpenSSH (often filtered/closed externally)",
+          "cve": null,
+          "notes": "Many writeups report SSH closed or not useful for initial access; prefer web foothold. SSH may matter only after local credentials (e.g. user robot) are obtained.",
+          "service_observations": "Many writeups report SSH closed or not useful for initial access; prefer web foothold. SSH may matter only after local credentials (e.g. user robot) are obtained."
+        }
+      ]
+    }
+  ],
+  "attaquant": {
+    "ip_machine_ecoute": "192.168.1.10"
+  },
+  "scenario_objective": "Authorized LADE lab: draft and attempt plausible paths toward MrRobot flags / root using neuro-symbolic AutoPlan-RT under human lab policy.",
+  "apt_profile": "lab_training_mrrobot_vulnhub",
+  "attack_objective": "Obtain progressive access on VulnHub Mr-Robot:1 (web recon → WordPress risk → local user → privilege escalation) in the authorized cyberrange only.",
+  "security_notes": "Topo LADE: kali 192.168.1.10 (Net1 + WAN) -- router -- mrrobot on Net2. Update mrrobot.ip after DHCP. Public writeup chain (training): robots/fsocity → WP login user elliot → weak WP password from wordlist → admin plugin/theme code exec (e.g. exploit/unix/webapp/wp_admin_shell_upload) → local user robot with MD5 password.raw-md5 crackable → SUID nmap 3.81 interactive (!sh) for root. Do not use outside authorized lab.",
+  "pistes_documentees": [
+    {
+      "titre": "robots.txt / flags web",
+      "synthese": "fsocity.dic wordlist + key-1-of-3.txt on webroot; first flag often trivial via robots.",
+      "modules_metasploit": []
+    },
+    {
+      "titre": "WordPress auth then shell",
+      "synthese": "Enumerate WP user (elliot common in writeups) then password via fsocity.dic; authenticated admin can upload plugin or use theme editor; MSF wp_admin_shell_upload documented in public walkthroughs.",
+      "modules_metasploit": [
+        "exploit/unix/webapp/wp_admin_shell_upload"
+      ]
+    },
+    {
+      "titre": "Local privesc nmap SUID",
+      "synthese": "After user robot: /usr/local/bin/nmap SUID old interactive mode allows !command as root (writeup consensus).",
+      "modules_metasploit": [
+        "exploit/linux/local/nmap_interactive_suid"
+      ]
+    }
+  ],
+  "network_policies": [
+    {
+      "from_zone": "Net1",
+      "to_zone": "Net2",
+      "allowed_ports": [80, 443, 22],
+      "deny_all_else": false,
+      "description": "Router forwards Kali (Net1) to MrRobot (Net2); WAN on Net1 for LLM API only."
+    }
+  ]
+}

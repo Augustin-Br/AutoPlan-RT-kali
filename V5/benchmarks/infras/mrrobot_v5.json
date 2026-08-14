@@ -1,0 +1,59 @@
+{
+  "entreprise": "V4_Benchmark_MrRobot",
+  "reseaux": [
+    {
+      "nom": "LAN_lab",
+      "sous_reseau": "192.168.56.0/24"
+    }
+  ],
+  "machines": [
+    {
+      "id": "mrrobot",
+      "ip": "192.168.56.115",
+      "zone": "LAN_lab",
+      "os": "Linux web lab",
+      "services": [
+        {
+          "port": 80,
+          "service": "HTTP",
+          "version": "Apache HTTP with WordPress",
+          "cve": null,
+          "notes": "WordPress CMS surface observed. robots.txt exposes /fsocity.dic and /key-1-of-3.txt. Login surface /wp-login.php observed. Desired chain: robots_txt_review then web_form_manual_validation for cautious exposed wordlist/login correlation; no brute force.",
+          "service_observations": "WordPress CMS surface observed. robots.txt exposes /fsocity.dic and /key-1-of-3.txt. Login surface /wp-login.php observed. Desired chain: robots_txt_review then web_form_manual_validation for cautious exposed wordlist/login correlation; no brute force."
+        },
+        {
+          "port": 443,
+          "service": "HTTPS",
+          "version": "Apache HTTPS",
+          "cve": null,
+          "notes": "HTTPS web surface observed as lower-priority alternative; certificate/header metadata only.",
+          "service_observations": "HTTPS web surface observed as lower-priority alternative; certificate/header metadata only."
+        }
+      ]
+    }
+  ],
+  "attaquant": {
+    "ip_machine_ecoute": "192.168.56.1"
+  },
+  "scenario_objective": "Prioritize credential-risk evidence chains from exposed web metadata and login surfaces without automated password attempts.",
+  "apt_profile": "V4 static benchmark generated from V3.5 freeze notes.",
+  "attack_objective": "Prioritize credential-risk evidence chains from exposed web metadata and login surfaces without automated password attempts.",
+  "security_notes": "Lab environment: symbolic scenario generation only; no live execution. Documented service observations are training evidence, not live telemetry.",
+  "network_policies": [
+    {
+      "from_zone": "WAN",
+      "to_zone": "LAN_lab",
+      "allowed_ports": [
+        21,
+        22,
+        80,
+        443,
+        139,
+        445,
+        3306
+      ],
+      "deny_all_else": true,
+      "description": "Default lab reachability policy (migrated from V4)."
+    }
+  ]
+}
