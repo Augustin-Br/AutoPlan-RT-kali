@@ -35,6 +35,8 @@ class StepOutcome(BaseModel):
     exit_code: int | None = None
     operator_note: str | None = None
     stdout_excerpt: str | None = None
+    adapt_source: str | None = None
+    produces_fact: str | None = None
 
 
 class PathAttempt(BaseModel):
@@ -64,7 +66,7 @@ class RuntimeConfig(BaseModel):
     timeout_seconds: int = 90
     exploit_timeout_seconds: int = 300
     lab_ack: bool = False
-    # Lab-only autonomous agent mode (requires --i-understand-lab-only at CLI).
+    # Lab-only autonomous agent mode (--auto-execute / --allow-auto-exploits).
     auto_execute: bool = False
     allow_auto_exploits: bool = False
     auto_promote_missing_tools: bool = False

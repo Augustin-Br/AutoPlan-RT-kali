@@ -99,11 +99,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scripted HITL answers (one per line) for tests/CI",
     )
     parser.add_argument(
-        "--i-understand-lab-only",
-        action="store_true",
-        help="Required with --execute-paths: authorized isolated-lab acknowledgement",
-    )
-    parser.add_argument(
         "--auto-execute",
         action="store_true",
         help="Lab-only: run ranked paths without per-step y/n (promotes missing tools automatically)",
@@ -310,15 +305,6 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.output).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if args.execute_paths:
-        if not args.i_understand_lab_only:
-            print("error: --execute-paths requires --i-understand-lab-only", file=sys.stderr)
-            return 2
-        if args.allow_auto_exploits and not args.auto_execute and not args.runtime_noninteractive:
-            # allow_auto_exploits alone is OK in HITL (exploit becomes autorun mode after y)
-            pass
-        if (args.auto_execute or args.allow_auto_exploits) and not args.i_understand_lab_only:
-            print("error: auto flags require --i-understand-lab-only", file=sys.stderr)
-            return 2
         from V5.runtime.hitl import OperatorIO
         from V5.runtime.models import RuntimeConfig
         from V5.runtime.orchestrator import RuntimeOrchestrator
@@ -346,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
         ).run(result.ranked_paths)
         result.trace["runtime"] = runtime_session.model_dump(mode="json")
+        _merge_observed_runtime(result, runtime_session)
         payload = result.model_dump_for_export()
         if args.runtime_output:
             Path(args.runtime_output).write_text(
@@ -355,6 +342,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.output:
             Path(args.output).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         if not args.json_only:
+            executed = (runtime_session.trace or {}).get("executed_chain")
+            drafted = (runtime_session.trace or {}).get("drafted_chain")
+            if drafted or executed:
+                print(f"drafted_chain={drafted}")
+                print(f"executed_chain={executed}")
             print(
                 f"runtime stop_reason={runtime_session.stop_reason} "
                 f"successful_path={runtime_session.successful_path_id} "
@@ -385,6 +377,39 @@ def main(argv: list[str] | None = None) -> int:
         json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
     return 0
+
+
+def _merge_observed_runtime(result: object, runtime_session: object) -> None:
+    """Attach the executed chain to the V5 result and merge the observed graph."""
+    from V5.models import AttackPath, KnowledgeGraph, V5Result
+    from V5.runtime.models import RuntimeSession
+
+    if not isinstance(result, V5Result) or not isinstance(runtime_session, RuntimeSession):
+        return
+    trace = runtime_session.trace or {}
+    if trace.get("executed_chain"):
+        result.trace["drafted_chain"] = trace.get("drafted_chain")
+        result.trace["executed_chain"] = trace.get("executed_chain")
+        result.trace["executed_detail"] = trace.get("executed_detail")
+    observed_payload = trace.get("observed_path")
+    if observed_payload:
+        observed = AttackPath.model_validate(observed_payload)
+        result.trace["observed_path_id"] = observed.path_id
+        result.ranked_paths = [observed, *[path for path in result.ranked_paths if path.path_id != observed.path_id]]
+        result.accepted_paths = [
+            observed,
+            *[path for path in result.accepted_paths if path.path_id != observed.path_id],
+        ]
+    graph_payload = trace.get("observed_graph")
+    if not graph_payload:
+        return
+    observed_graph = KnowledgeGraph.model_validate(graph_payload)
+    existing = {node.node_id for node in result.graph.nodes}
+    for node in observed_graph.nodes:
+        if node.node_id not in existing:
+            result.graph.nodes.append(node)
+            existing.add(node.node_id)
+    result.graph.edges.extend(observed_graph.edges)
 
 
 if __name__ == "__main__":

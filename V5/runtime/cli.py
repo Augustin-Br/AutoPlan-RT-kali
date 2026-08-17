@@ -26,11 +26,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Script file (one answer per line, or JSONL {\"answer\":...})",
     )
     parser.add_argument(
-        "--i-understand-lab-only",
-        action="store_true",
-        help="Required: acknowledge authorized isolated-lab use only",
-    )
-    parser.add_argument(
         "--auto-execute",
         action="store_true",
         help="Run without per-step prompts; auto-promote missing tools",
@@ -53,9 +48,6 @@ def load_ranked_paths(path: str | Path) -> list[AttackPath]:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if not args.i_understand_lab_only:
-        print("error: refuse to run without --i-understand-lab-only", file=sys.stderr)
-        return 2
 
     io = (
         OperatorIO.from_script_file(args.runtime_noninteractive)

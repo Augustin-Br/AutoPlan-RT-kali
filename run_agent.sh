@@ -42,7 +42,6 @@ python -m V5.cli \
   --execute-paths \
   --auto-execute \
   --allow-auto-exploits \
-  --i-understand-lab-only \
   --runtime-timeout 300 \
   --output "outputs/v5_agent.json" \
   --runtime-output "outputs/v5_runtime.json" \

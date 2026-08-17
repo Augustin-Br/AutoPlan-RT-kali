@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from V5.models import AttackPath, PathStep
+from V5.knowledge_graph import KnowledgeGraphBuilder
+from V5.models import (
+    AttackPath,
+    KnowledgeGraph,
+    LLMPathProposal,
+    PathStep,
+    PlausibilityBreakdown,
+    ValidatedPathRecord,
+)
 from V5.runtime.adapt import AdaptDecision, choose_next
 from V5.runtime.allowlist import AllowlistState, BASE_ALLOWLIST, _is_exploit_family, _normalize_tool, can_autorun
 from V5.runtime.command_suggest import (
@@ -465,6 +473,8 @@ class RuntimeOrchestrator:
                         action="skip",
                         status="skipped",
                         operator_note=decision.note,
+                        adapt_source=decision.source,
+                        produces_fact=decision.step.produces_fact,
                     )
                 )
                 continue
@@ -505,7 +515,25 @@ class RuntimeOrchestrator:
             session.stop_reason = "paths_exhausted"
         session.attempts.append(attempt)
         session.session_allowlist = sorted(self.allowlist.session)
+        drafted = " -> ".join(step.tool for step in primary.steps)
+        executed_tools, executed_detail = _summarize_executed_chain(attempt.step_outcomes)
+        observed_path, observed_graph = _observed_path_and_graph(
+            attempt.step_outcomes,
+            world,
+            drafted_path_id=primary.path_id,
+        )
         session.trace["world"] = world.snapshot()
+        session.trace["drafted_chain"] = drafted
+        session.trace["executed_chain"] = executed_tools
+        session.trace["executed_detail"] = executed_detail
+        if observed_path is not None:
+            session.trace["observed_path"] = observed_path.model_dump(mode="json")
+        if observed_graph is not None:
+            session.trace["observed_graph"] = observed_graph.model_dump(mode="json")
+        self.io.emit(f"  Drafted scenario: {drafted}")
+        self.io.emit(f"  Executed chain:   {executed_tools or '(none)'}")
+        if executed_detail:
+            self.io.emit(f"  Executed detail:  {executed_detail}")
         self.io.emit(
             f"  Adaptive stop={session.stop_reason} facts={world.facts} "
             f"shell={world.has_shell} root={world.has_root}"
@@ -622,6 +650,8 @@ class RuntimeOrchestrator:
             exit_code=result.exit_code,
             operator_note=result.error or decision.note,
             stdout_excerpt=result.stdout_excerpt,
+            adapt_source=decision.source,
+            produces_fact=step.produces_fact,
         )
         return outcome, result
 
@@ -674,3 +704,98 @@ def _consume_tool(remaining: list[PathStep], tool: str) -> None:
 def _needs_wp_bypass(result: ExecResult) -> bool:
     blob = f"{result.stdout_excerpt or ''}\n{result.error or ''}".lower()
     return "does not appear to be using wordpress" in blob
+
+
+def _summarize_executed_chain(outcomes: list[StepOutcome]) -> tuple[str, str]:
+    tools: list[str] = []
+    detail: list[str] = []
+    for outcome in outcomes:
+        if outcome.status == "skipped":
+            continue
+        tools.append(outcome.tool)
+        source = outcome.adapt_source or "run"
+        detail.append(f"{outcome.tool}[{source}:{outcome.status}]")
+    return " -> ".join(tools), " -> ".join(detail)
+
+
+def _observed_path_and_graph(
+    outcomes: list[StepOutcome],
+    world: WorldState,
+    *,
+    drafted_path_id: str,
+) -> tuple[AttackPath | None, KnowledgeGraph | None]:
+    steps: list[PathStep] = []
+    for index, outcome in enumerate(outcomes, start=1):
+        if outcome.status != "success":
+            continue
+        fact = outcome.produces_fact or _fact_for_observed_tool(outcome.tool, world)
+        steps.append(
+            PathStep(
+                step_index=index,
+                tool=outcome.tool,
+                tool_type=_tool_type_for_observed(outcome.tool),
+                target_ip=world.target_ip,
+                port=world.port or 80,
+                produces_fact=fact,
+                justification=outcome.operator_note or outcome.adapt_source or "observed",
+            )
+        )
+    if not steps:
+        return None, None
+    final = steps[-1].produces_fact
+    if world.has_root:
+        final = "root_access"
+    elif world.has_shell:
+        final = "shell_access"
+    path = AttackPath(
+        path_id="observed:adaptive",
+        steps=steps,
+        plausibility=1.0,
+        strategy_score=1.0,
+        strategy="observed",
+    )
+    proposal = LLMPathProposal(
+        path_id=path.path_id,
+        title="Runtime-observed adaptive chain",
+        hypothesis_summary=f"Executed from drafted {drafted_path_id}",
+        target_ip=world.target_ip,
+        final_fact=final,
+        steps=steps,
+        confidence="high",
+    )
+    record = ValidatedPathRecord(
+        path=proposal,
+        status="accepted",
+        plausibility=PlausibilityBreakdown(composite=1.0),
+    )
+    builder = KnowledgeGraphBuilder()
+    builder.integrate(record)
+    path.edges = list(builder.graph.edges)
+    return path, builder.graph
+
+
+def _fact_for_observed_tool(tool: str, world: WorldState) -> str:
+    lowered = tool.lower()
+    if world.has_root and (
+        lowered.startswith(("exploit/linux/local/", "exploit/unix/local/"))
+        or "nmap_interactive" in lowered
+    ):
+        return "root_access"
+    if world.has_shell and ("exploit/" in lowered or lowered.startswith("exploit")):
+        return "shell_access"
+    if _normalize_tool(tool) == "hydra":
+        return "credential_access" if world.credentials else "service_intelligence"
+    return "service_intelligence"
+
+
+def _tool_type_for_observed(tool: str) -> str:
+    lowered = _normalize_tool(tool)
+    if lowered == "hydra":
+        return "bruteforce"
+    if lowered in {"curl", "wpscan", "dirb"}:
+        return "web_client"
+    if lowered == "nmap":
+        return "scanner"
+    if "exploit/" in lowered or lowered.startswith("exploit"):
+        return "exploit_framework"
+    return "other"
