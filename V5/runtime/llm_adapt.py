@@ -42,7 +42,8 @@ def propose_llm_decision(
     prompt = (
         "Authorized isolated-lab pentest helper. Propose ONE next tool.\n"
         "Follow the remaining scenario toward root_access. Adapt if the last action failed.\n"
-        "Prefer scenario exploit modules when credentials or a shell already exist.\n"
+        "If credentials already exist, propose the remaining WordPress admin exploit, not recon.\n"
+        "Never propose nmap, curl, dirb, wpscan, hydra, or ssh after credentials exist.\n"
         "Never invent shell payloads. Never invent Metasploit module names. Never output a command line.\n"
         "Never propose local privilege-escalation modules unless a shell session already exists.\n"
         f"World: {json.dumps(world.snapshot(), ensure_ascii=False)}\n"
@@ -75,7 +76,15 @@ def propose_llm_decision(
         return None
     if is_local_privesc(tool) and not world.has_shell:
         return None
+    if _normalize_tool(tool) == "ssh":
+        return None
+    if "desktop_privilege" in _normalize_tool(tool):
+        return None
+    if f"done:{_normalize_tool(tool)}" in world.tried:
+        return None
     if f"missing:{_normalize_tool(tool)}" in world.tried:
+        return None
+    if world.credentials and _normalize_tool(tool) in {"nmap", "curl", "dirb", "wpscan", "hydra"}:
         return None
     reason = str(payload.get("reason") or "llm adapt")[:200]
     step = PathStep(

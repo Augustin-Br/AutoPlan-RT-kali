@@ -11,7 +11,7 @@ from V5.models import (
     PlausibilityBreakdown,
     ValidatedPathRecord,
 )
-from V5.runtime.adapt import AdaptDecision, choose_next
+from V5.runtime.adapt import AdaptDecision, choose_next, select_primary_path, useful_merge_steps
 from V5.runtime.allowlist import AllowlistState, BASE_ALLOWLIST, _is_exploit_family, _normalize_tool, can_autorun
 from V5.runtime.command_suggest import (
     WP_TARGETURI_CANDIDATES,
@@ -402,13 +402,14 @@ class RuntimeOrchestrator:
 
     def _run_adaptive(self, paths: list[AttackPath], session: RuntimeSession) -> RuntimeSession:
         """Follow the top scenario, adapting after each action toward root."""
-        primary = paths[0]
+        primary = select_primary_path(paths)
         remaining = list(primary.steps)
         decisions: list[AllowlistDecision] = []
         for rank, path in enumerate(paths, start=1):
             decisions.extend(self._auto_promote_path(path, path_rank=rank))
         session.session_allowlist = sorted(self.allowlist.session)
         session.trace["adapt"] = True
+        session.trace["selected_path_id"] = primary.path_id
 
         target_ip = remaining[0].target_ip if remaining else "127.0.0.1"
         port = (remaining[0].port or 80) if remaining else 80
@@ -419,13 +420,19 @@ class RuntimeOrchestrator:
             status="blocked",
             allowlist_decisions=decisions,
         )
+        extras = [path for path in paths if path.path_id != primary.path_id]
         self.io.emit(
             f"\n=== Adaptive loop on {primary.path_id} "
             f"(max_actions={'unlimited' if not getattr(self.config, 'max_actions', 0) else self.config.max_actions}) ==="
         )
         self.io.emit(f"  scenario: {' -> '.join(step.tool for step in remaining)}")
+        if extras:
+            self.io.emit(
+                "  focus pick among "
+                + ", ".join(f"{path.path_id}" for path in paths)
+            )
 
-        extra_paths = list(paths[1:])
+        extra_paths = list(extras)
         max_actions = int(getattr(self.config, "max_actions", 0) or 0)
         action_index = 0
 
@@ -437,10 +444,17 @@ class RuntimeOrchestrator:
             if world.has_root:
                 break
             decision = choose_next(world, remaining, last_error=world.last_error)
-            if decision is None and extra_paths:
+            while decision is None and extra_paths:
                 nxt = extra_paths.pop(0)
-                self.io.emit(f"  Merge tools from fallback path {nxt.path_id}")
-                remaining.extend(nxt.steps)
+                added = useful_merge_steps(world, remaining, nxt.steps)
+                if not added:
+                    self.io.emit(f"  Skip fallback {nxt.path_id} (no new useful tools)")
+                    continue
+                remaining.extend(added)
+                self.io.emit(
+                    f"  Merge useful tools from {nxt.path_id}: "
+                    + " -> ".join(step.tool for step in added)
+                )
                 decision = choose_next(world, remaining, last_error=world.last_error)
             if decision is None and getattr(self.config, "use_llm_adapt", True):
                 decision = propose_llm_decision(
@@ -494,6 +508,7 @@ class RuntimeOrchestrator:
             )
             attempt.step_outcomes.append(outcome)
             ingest_result(world, result.command if result else None, result)
+            world.tried.add(f"done:{_normalize_tool(decision.step.tool)}")
             if world.has_root:
                 break
 

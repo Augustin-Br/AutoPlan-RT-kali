@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from V5.models import PathStep
+from V5.models import AttackPath, PathStep
 from V5.runtime.allowlist import _normalize_tool
 from V5.runtime.artifacts import http_url, local_name_for_path, wordlist_paths
 from V5.runtime.command_suggest import (
@@ -13,6 +13,8 @@ from V5.runtime.command_suggest import (
     normalize_target_uri,
 )
 from V5.runtime.world import WorldState
+
+_PLAN_RECON = frozenset({"nmap", "curl", "dirb", "wpscan"})
 
 
 @dataclass
@@ -34,6 +36,56 @@ def scenario_needs_web_creds(plan: list[PathStep]) -> bool:
     return "hydra" in tools or any(module_needs_login_credentials(tool) for tool in tools)
 
 
+def path_focus_score(path: AttackPath) -> int:
+    """Prefer drafted chains that include WP creds + admin foothold, not ssh/desktop noise."""
+    tools = [_normalize_tool(step.tool) for step in path.steps]
+    score = 0
+    if any(module_needs_login_credentials(tool) for tool in tools):
+        score += 4
+    if "hydra" in tools:
+        score += 3
+    if any(is_local_privesc(tool) for tool in tools):
+        score += 1
+    if "ssh" in tools:
+        score -= 2
+    if any("desktop_privilege" in tool for tool in tools):
+        score -= 2
+    if any(module_needs_login_credentials(tool) for tool in tools) and "hydra" not in tools:
+        score -= 1
+    return score
+
+
+def select_primary_path(paths: list[AttackPath]) -> AttackPath:
+    """Pick the drafted path closest to creds → WP admin, not merely rank #1."""
+    if not paths:
+        raise ValueError("no ranked paths")
+    return max(
+        paths,
+        key=lambda path: (path_focus_score(path), path.strategy_score, path.plausibility),
+    )
+
+
+def useful_merge_steps(
+    world: WorldState,
+    remaining: list[PathStep],
+    extra_steps: list[PathStep],
+) -> list[PathStep]:
+    """Keep only fallback tools that can still run and are not already queued."""
+    have = {_normalize_tool(step.tool) for step in remaining}
+    added: list[PathStep] = []
+    for step in extra_steps:
+        tool = _normalize_tool(step.tool)
+        if tool in have:
+            continue
+        if _permanently_skip(world, tool):
+            continue
+        if is_local_privesc(tool) and not world.has_shell:
+            continue
+        have.add(tool)
+        added.append(step)
+    return added
+
+
 def choose_next(
     world: WorldState,
     remaining: list[PathStep],
@@ -45,6 +97,7 @@ def choose_next(
     if world.has_root:
         return None
 
+    prune_remaining(world, remaining)
     needs_creds = scenario_needs_web_creds(remaining) or bool(world.tried & {"hydra_enum", "hydra_pass"})
 
     if needs_creds and world.robots_body is None and "robots" not in world.tried:
@@ -112,18 +165,41 @@ def choose_next(
     )
 
 
+def prune_remaining(world: WorldState, remaining: list[PathStep]) -> None:
+    remaining[:] = [
+        step for step in remaining if not _permanently_skip(world, _normalize_tool(step.tool))
+    ]
+
+
+def _permanently_skip(world: WorldState, tool: str) -> bool:
+    """Drop tools that will not become useful later in this run."""
+    if f"done:{tool}" in world.tried or f"missing:{tool}" in world.tried:
+        return True
+    if tool == "ssh":
+        return True
+    if tool == "hydra" and (world.credentials or "hydra_pass" in world.tried):
+        return True
+    if "desktop_privilege" in tool:
+        return True
+    if tool in _PLAN_RECON and (world.credentials or "hydra_pass" in world.tried):
+        return True
+    return False
+
+
 def _first_runnable(world: WorldState, remaining: list[PathStep]) -> tuple[int, PathStep] | None:
     for index, step in enumerate(remaining):
         tool = _normalize_tool(step.tool)
+        if _permanently_skip(world, tool) and tool != "hydra":
+            continue
         if tool == "hydra":
             return index, step
         if module_needs_login_credentials(step.tool) and not world.credentials:
             continue
         if is_local_privesc(tool) and not world.has_shell:
             continue
-        if f"missing:{_normalize_tool(step.tool)}" in world.tried:
+        if f"missing:{tool}" in world.tried:
             continue
-        if f"done:{_normalize_tool(step.tool)}" in world.tried:
+        if f"done:{tool}" in world.tried:
             continue
         return index, step
     return None

@@ -6,6 +6,9 @@ export PYTHONPATH=.
 export HOME="${HOME:-/home/lade}"
 export AUTOPLAN_LHOST="192.168.1.10"
 
+# Adaptive runtime: robots.txt → unique .dic → hydra (peut durer ~15-25 min)
+# Le timeout Hydra interne est 1500s; --runtime-timeout s'applique au recon.
+# --runtime-exploit-timeout s'applique à msfconsole (upload + reverse).
 TARGET_IP="192.168.2.12"
 INFRA="V5/benchmarks/infras/lade_mrrobot_v5.json"
 
