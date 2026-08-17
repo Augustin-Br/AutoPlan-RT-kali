@@ -93,6 +93,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--runtime-top-k", type=int, default=5)
     parser.add_argument("--runtime-timeout", type=int, default=90)
+    parser.add_argument(
+        "--runtime-exploit-timeout",
+        type=int,
+        default=900,
+        help="Timeout in seconds for msfconsole / exploit steps (default: 900)",
+    )
     parser.add_argument("--runtime-output", help="Write RuntimeSession JSON")
     parser.add_argument(
         "--runtime-noninteractive",
@@ -324,6 +330,9 @@ def main(argv: list[str] | None = None) -> int:
             config=RuntimeConfig(
                 top_k=args.runtime_top_k,
                 timeout_seconds=args.runtime_timeout,
+                exploit_timeout_seconds=int(
+                    getattr(args, "runtime_exploit_timeout", 900) or 900
+                ),
                 lab_ack=True,
                 auto_execute=bool(args.auto_execute),
                 allow_auto_exploits=bool(args.allow_auto_exploits),

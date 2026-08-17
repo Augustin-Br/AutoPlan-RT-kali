@@ -554,6 +554,8 @@ class RuntimeOrchestrator:
         timeout = self._timeout_for_step(step)
         target_uri = normalize_target_uri(world.target_uri)
         skip_wpcheck = bool(decision.skip_wpcheck)
+        if module_needs_login_credentials(step.tool) and world.credentials:
+            skip_wpcheck = True
         world.tried.add(f"targeturi:{target_uri}")
         result = run_step_if_allowed(
             step,

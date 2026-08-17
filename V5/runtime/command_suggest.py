@@ -285,14 +285,15 @@ def _msfconsole_command(
         username, password = credentials[0]
         statements.append(f"set USERNAME {_msf_literal(username)}")
         statements.append(f"set PASSWORD {_msf_literal(password)}")
-    # ForceExploit is unknown on many MSF builds; WPCHECK is the WordPress mixin knob.
     if skip_wpcheck and _is_wordpress_msf_module(module):
         statements.append("set WPCHECK false")
-    elif not skip_wpcheck:
-        statements.append("check")
+    if _is_web_msf_module(module):
+        statements.append("set HttpClientTimeout 120")
     if for_auto_exploit:
         statements.append("run")
         statements.append("exit")
+    elif not skip_wpcheck:
+        statements.append("check")
     script = "; ".join(statements)
     if for_auto_exploit:
         return f"msfconsole -q -x {shlex.quote(script)}"

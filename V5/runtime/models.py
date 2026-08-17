@@ -64,7 +64,7 @@ class RuntimeSession(BaseModel):
 class RuntimeConfig(BaseModel):
     top_k: int = 5
     timeout_seconds: int = 90
-    exploit_timeout_seconds: int = 300
+    exploit_timeout_seconds: int = 900
     lab_ack: bool = False
     # Lab-only autonomous agent mode (--auto-execute / --allow-auto-exploits).
     auto_execute: bool = False

@@ -21,6 +21,7 @@ python -m V5.cli \
   --strategy balanced --top-k 5 \
   --execute-paths --auto-execute --allow-auto-exploits \
   --runtime-timeout 300 \
+  --runtime-exploit-timeout 900 \
   --output outputs/mrrobot/v5_agent.json \
   --runtime-output outputs/mrrobot/v5_runtime.json \
   --infra-output outputs/mrrobot/v5_infra_enriched.json

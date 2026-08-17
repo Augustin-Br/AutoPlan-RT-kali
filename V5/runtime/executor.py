@@ -122,8 +122,39 @@ def run_step_if_allowed(
             timeout=timeout_seconds,
             check=False,
         )
-    except subprocess.TimeoutExpired:
-        return ExecResult(ok=False, command=command, error="timeout", exit_code=None)
+    except subprocess.TimeoutExpired as exc:
+        full_stdout = _timeout_text(exc.stdout)
+        full_stderr = _timeout_text(exc.stderr)
+        error = classify_command_result(
+            command,
+            returncode=None,
+            stdout=full_stdout,
+            stderr=full_stderr,
+        )
+        if error is None:
+            hydra_creds = parse_hydra_credentials(full_stdout) if argv0_of(command) == "hydra" else None
+            usernames = None
+            if hydra_creds and _is_hydra_user_enum(command):
+                usernames = [user for user, _password in hydra_creds]
+                hydra_creds = None
+            return ExecResult(
+                ok=True,
+                command=command,
+                error=None,
+                exit_code=None,
+                stdout_excerpt=_tail_excerpt(full_stdout, 2000) or None,
+                stderr_excerpt=_tail_excerpt(full_stderr, 500) or None,
+                credentials=hydra_creds or None,
+                usernames=usernames,
+            )
+        return ExecResult(
+            ok=False,
+            command=command,
+            error="timeout" if error == "msf_no_session" else error,
+            exit_code=None,
+            stdout_excerpt=_tail_excerpt(full_stdout, 2000) or None,
+            stderr_excerpt=_tail_excerpt(full_stderr, 500) or None,
+        )
     except OSError as exc:
         return ExecResult(ok=False, command=command, error=str(exc))
 
@@ -151,6 +182,14 @@ def run_step_if_allowed(
         credentials=hydra_creds or None,
         usernames=usernames,
     )
+
+
+def _timeout_text(payload: object) -> str:
+    if payload is None:
+        return ""
+    if isinstance(payload, bytes):
+        return payload.decode("utf-8", errors="replace")
+    return str(payload)
 
 
 def argv0_of(command: str | None) -> str:
