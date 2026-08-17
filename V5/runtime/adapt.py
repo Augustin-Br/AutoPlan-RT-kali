@@ -15,6 +15,11 @@ from V5.runtime.command_suggest import (
 from V5.runtime.world import WorldState
 
 _PLAN_RECON = frozenset({"nmap", "curl", "dirb", "wpscan"})
+_SERVICE_EXPLOIT_MARKERS = (
+    "vsftpd_234",
+    "usermap_script",
+    "unreal_ircd",
+)
 
 
 @dataclass
@@ -37,9 +42,11 @@ def scenario_needs_web_creds(plan: list[PathStep]) -> bool:
 
 
 def path_focus_score(path: AttackPath) -> int:
-    """Prefer drafted chains that include WP creds + admin foothold, not ssh/desktop noise."""
+    """Prefer service exploits (MS2) or WP creds+admin (MrRobot), not ssh/desktop noise."""
     tools = [_normalize_tool(step.tool) for step in path.steps]
     score = 0
+    if any(any(marker in tool for marker in _SERVICE_EXPLOIT_MARKERS) for tool in tools):
+        score += 8
     if any(module_needs_login_credentials(tool) for tool in tools):
         score += 4
     if "hydra" in tools:
@@ -56,7 +63,7 @@ def path_focus_score(path: AttackPath) -> int:
 
 
 def select_primary_path(paths: list[AttackPath]) -> AttackPath:
-    """Pick the drafted path closest to creds → WP admin, not merely rank #1."""
+    """Pick the drafted path closest to a real lab foothold, not merely rank #1."""
     if not paths:
         raise ValueError("no ranked paths")
     return max(

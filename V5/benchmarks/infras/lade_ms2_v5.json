@@ -1,0 +1,118 @@
+{
+  "entreprise": "UQO_LADE_Metasploitable2",
+  "reseaux": [
+    {
+      "nom": "Net1",
+      "sous_reseau": "192.168.1.0/24"
+    },
+    {
+      "nom": "Net2",
+      "sous_reseau": "192.168.2.0/24"
+    }
+  ],
+  "machines": [
+    {
+      "id": "ms2",
+      "ip": "192.168.2.11",
+      "zone": "Net2",
+      "os": "Linux (Metasploitable 2 lab)",
+      "services": [
+        {
+          "port": 21,
+          "service": "FTP",
+          "version": "vsftpd 2.3.4",
+          "cve": "CVE-2011-2523",
+          "notes": "vsftpd 2.3.4 FTP service observed; known lab backdoor vector exploit/unix/ftp/vsftpd_234_backdoor.",
+          "service_observations": "vsftpd 2.3.4 FTP service observed; known lab backdoor vector exploit/unix/ftp/vsftpd_234_backdoor."
+        },
+        {
+          "port": 22,
+          "service": "SSH",
+          "version": "OpenSSH 4.7p1 Debian 8ubuntu1",
+          "cve": null,
+          "notes": "SSH banner observed; supporting reconnaissance only.",
+          "service_observations": "SSH banner observed; supporting reconnaissance only."
+        },
+        {
+          "port": 80,
+          "service": "HTTP",
+          "version": "Apache 2.2.8 (Ubuntu)",
+          "cve": null,
+          "notes": "Apache HTTP surface with phpMyAdmin path /phpMyAdmin/. Not a WordPress CMS.",
+          "service_observations": "Apache HTTP surface with phpMyAdmin path /phpMyAdmin/. Not a WordPress CMS."
+        },
+        {
+          "port": 139,
+          "service": "Samba",
+          "version": "Samba 3.0.20-Debian",
+          "cve": "CVE-2007-2447",
+          "notes": "Samba 3.0.20 on NetBIOS/SMB; username map script CVE-2007-2447 maps to exploit/multi/samba/usermap_script.",
+          "service_observations": "Samba 3.0.20 on NetBIOS/SMB; username map script CVE-2007-2447 maps to exploit/multi/samba/usermap_script."
+        },
+        {
+          "port": 445,
+          "service": "Samba",
+          "version": "Samba 3.0.20-Debian",
+          "cve": "CVE-2007-2447",
+          "notes": "Samba 3.0.20 on SMB; username map script CVE-2007-2447 is a high-confidence service exploit vector.",
+          "service_observations": "Samba 3.0.20 on SMB; username map script CVE-2007-2447 is a high-confidence service exploit vector."
+        },
+        {
+          "port": 6667,
+          "service": "IRC",
+          "version": "UnrealIRCd 3.2.8.1",
+          "cve": null,
+          "notes": "UnrealIRCd service observed; known lab backdoor vector exploit/unix/irc/unreal_ircd_3281_backdoor.",
+          "service_observations": "UnrealIRCd service observed; known lab backdoor vector exploit/unix/irc/unreal_ircd_3281_backdoor."
+        },
+        {
+          "port": 8180,
+          "service": "HTTP",
+          "version": "Apache Tomcat/Coyote",
+          "cve": null,
+          "notes": "Tomcat-related web paths on port 8180; manager exposure needs live validation.",
+          "service_observations": "Tomcat-related web paths on port 8180; manager exposure needs live validation."
+        }
+      ]
+    }
+  ],
+  "attaquant": {
+    "ip_machine_ecoute": "192.168.1.10"
+  },
+  "scenario_objective": "Authorized LADE lab: draft and attempt plausible paths toward Metasploitable2 foothold/root using neuro-symbolic AutoPlan-RT under human lab policy.",
+  "apt_profile": "lab_training_metasploitable2",
+  "attack_objective": "Obtain foothold/root on the Metasploitable2 lab VM (service recon then known lab service exploits) in the authorized cyberrange only.",
+  "security_notes": "Topo LADE: kali 192.168.1.10 (Net1 + WAN) -- router -- ms2 on Net2 at 192.168.2.11. Public lab vectors: vsftpd 2.3.4 backdoor, Samba usermap_script, UnrealIRCd backdoor. Do not use outside authorized lab. HTTP is not WordPress.",
+  "pistes_documentees": [
+    {
+      "titre": "vsftpd 2.3.4 backdoor",
+      "synthese": "FTP 21 vsftpd 2.3.4; Metasploit exploit/unix/ftp/vsftpd_234_backdoor is the usual first foothold.",
+      "modules_metasploit": [
+        "exploit/unix/ftp/vsftpd_234_backdoor"
+      ]
+    },
+    {
+      "titre": "Samba username map script",
+      "synthese": "SMB 139/445 Samba 3.0.20; exploit/multi/samba/usermap_script (CVE-2007-2447).",
+      "modules_metasploit": [
+        "exploit/multi/samba/usermap_script"
+      ]
+    },
+    {
+      "titre": "UnrealIRCd backdoor",
+      "synthese": "IRC 6667 UnrealIRCd 3.2.8.1; exploit/unix/irc/unreal_ircd_3281_backdoor as secondary vector.",
+      "modules_metasploit": [
+        "exploit/unix/irc/unreal_ircd_3281_backdoor"
+      ]
+    }
+  ],
+  "network_policies": [
+    {
+      "from_zone": "Net1",
+      "to_zone": "Net2",
+      "allowed_ports": [21, 22, 80, 139, 445, 6667, 8180],
+      "deny_all_else": false,
+      "description": "Router forwards Kali (Net1) to Metasploitable2 (Net2); WAN on Net1 for LLM API only."
+    }
+  ]
+}

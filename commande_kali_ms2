@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd /home/lade/Documents/AutoPlan-RT-kali
+source .venv/bin/activate
+export PYTHONPATH=.
+export HOME="${HOME:-/home/lade}"
+export AUTOPLAN_LHOST="192.168.1.10"
+
+# Metasploitable2: nmap/curl then service exploits (vsftpd / Samba / UnrealIRCd).
+# Pas de wpscan/dirb: HTTP n'est pas WordPress. Beaucoup plus court que Hydra MrRobot.
+TARGET_IP="192.168.2.11"
+INFRA="V5/benchmarks/infras/lade_ms2_v5.json"
+
+mkdir -p outputs/ms2
+
+python -m V5.cli \
+  --infra "$INFRA" \
+  --target-ip "$TARGET_IP" \
+  --objective "Authorized lab: obtain foothold/root on Metasploitable2 lab VM" \
+  --execute-recon --recon-level 1 \
+  --scan-tools nmap,curl \
+  --enable-llm --llm-provider google \
+  --strategy balanced --top-k 5 \
+  --execute-paths --auto-execute --allow-auto-exploits \
+  --runtime-timeout 300 \
+  --runtime-exploit-timeout 900 \
+  --output outputs/ms2/v5_agent.json \
+  --runtime-output outputs/ms2/v5_runtime.json \
+  --infra-output outputs/ms2/v5_infra_enriched.json
+
+echo DONE
