@@ -4,11 +4,11 @@ cd /home/lade/Documents/AutoPlan-RT-kali
 source .venv/bin/activate
 export PYTHONPATH=.
 export HOME="${HOME:-/home/lade}"
-export AUTOPLAN_LHOST="192.168.1.10"
+export AUTOPLAN_LHOST="192.168.0.1"
 
-# Metasploitable2: nmap/curl then service exploits (vsftpd / Samba / UnrealIRCd).
-# Pas de wpscan/dirb: HTTP n'est pas WordPress. Beaucoup plus court que Hydra MrRobot.
-TARGET_IP="192.168.2.11"
+# Lab plat labo2: kali-1 192.168.0.1 ↔ Metasploit2-1 192.168.0.2 (e1000).
+# vsftpd / Samba / UnrealIRCd. Pas de wpscan/dirb (HTTP n'est pas WordPress).
+TARGET_IP="192.168.0.2"
 INFRA="V5/benchmarks/infras/lade_ms2_v5.json"
 
 mkdir -p outputs/ms2

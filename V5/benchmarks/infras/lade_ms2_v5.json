@@ -2,19 +2,15 @@
   "entreprise": "UQO_LADE_Metasploitable2",
   "reseaux": [
     {
-      "nom": "Net1",
-      "sous_reseau": "192.168.1.0/24"
-    },
-    {
-      "nom": "Net2",
-      "sous_reseau": "192.168.2.0/24"
+      "nom": "labo2",
+      "sous_reseau": "192.168.0.0/24"
     }
   ],
   "machines": [
     {
       "id": "ms2",
-      "ip": "192.168.2.11",
-      "zone": "Net2",
+      "ip": "192.168.0.2",
+      "zone": "labo2",
       "os": "Linux (Metasploitable 2 lab)",
       "services": [
         {
@@ -77,12 +73,12 @@
     }
   ],
   "attaquant": {
-    "ip_machine_ecoute": "192.168.1.10"
+    "ip_machine_ecoute": "192.168.0.1"
   },
   "scenario_objective": "Authorized LADE lab: draft and attempt plausible paths toward Metasploitable2 foothold/root using neuro-symbolic AutoPlan-RT under human lab policy.",
   "apt_profile": "lab_training_metasploitable2",
   "attack_objective": "Obtain foothold/root on the Metasploitable2 lab VM (service recon then known lab service exploits) in the authorized cyberrange only.",
-  "security_notes": "Topo LADE: kali 192.168.1.10 (Net1 + WAN) -- router -- ms2 on Net2 at 192.168.2.11. Public lab vectors: vsftpd 2.3.4 backdoor, Samba usermap_script, UnrealIRCd backdoor. Do not use outside authorized lab. HTTP is not WordPress.",
+  "security_notes": "Topo LADE labo2: kali-1 192.168.0.1 (WAN gate 192.168.0.3) on the same L2 as Metasploit2-1 192.168.0.2 (e1000). Public lab vectors: vsftpd 2.3.4 backdoor, Samba usermap_script, UnrealIRCd backdoor. Do not use outside authorized lab. HTTP is not WordPress.",
   "pistes_documentees": [
     {
       "titre": "vsftpd 2.3.4 backdoor",
@@ -108,11 +104,11 @@
   ],
   "network_policies": [
     {
-      "from_zone": "Net1",
-      "to_zone": "Net2",
+      "from_zone": "labo2",
+      "to_zone": "labo2",
       "allowed_ports": [21, 22, 80, 139, 445, 6667, 8180],
       "deny_all_else": false,
-      "description": "Router forwards Kali (Net1) to Metasploitable2 (Net2); WAN on Net1 for LLM API only."
+      "description": "Same L2: kali-1 192.168.0.1 to Metasploit2-1 192.168.0.2; WAN gate 192.168.0.3 for LLM API only."
     }
   ]
 }
