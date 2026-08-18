@@ -292,10 +292,6 @@ def _msfconsole_command(
         statements.append("set HttpClientTimeout 120")
     if for_auto_exploit:
         statements.append("run")
-        # Bind/reverse shells show up a few seconds after run; exit immediately
-        # drops the handler before "session opened" hits stdout.
-        if not _is_wordpress_msf_module(module):
-            statements.append("sleep 15")
         statements.append("exit")
     elif not skip_wpcheck:
         statements.append("check")

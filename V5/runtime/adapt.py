@@ -42,17 +42,21 @@ def scenario_needs_web_creds(plan: list[PathStep]) -> bool:
 
 
 def path_focus_score(path: AttackPath) -> int:
-    """Prefer service exploits (MS2) or WP creds+admin (MrRobot), not ssh/desktop noise."""
+    """Prefer vsftpd then Samba on MS2, or WP creds+admin on MrRobot."""
     tools = [_normalize_tool(step.tool) for step in path.steps]
     score = 0
-    if any(any(marker in tool for marker in _SERVICE_EXPLOIT_MARKERS) for tool in tools):
+    if any("vsftpd_234" in tool for tool in tools):
+        score += 10
+    elif any("usermap_script" in tool for tool in tools):
         score += 8
+    elif any("unreal_ircd" in tool for tool in tools):
+        score += 6
     if any(module_needs_login_credentials(tool) for tool in tools):
         score += 4
     if "hydra" in tools:
         score += 3
     if any(is_local_privesc(tool) for tool in tools):
-        score += 1
+        score -= 3
     if "ssh" in tools:
         score -= 2
     if any("desktop_privilege" in tool for tool in tools):
@@ -185,6 +189,8 @@ def _permanently_skip(world: WorldState, tool: str) -> bool:
     if tool == "ssh":
         return True
     if tool == "hydra" and (world.credentials or "hydra_pass" in world.tried):
+        return True
+    if is_local_privesc(tool):
         return True
     if "desktop_privilege" in tool:
         return True

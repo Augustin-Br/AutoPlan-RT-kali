@@ -509,6 +509,14 @@ class RuntimeOrchestrator:
             attempt.step_outcomes.append(outcome)
             ingest_result(world, result.command if result else None, result)
             world.tried.add(f"done:{_normalize_tool(decision.step.tool)}")
+            status = "ok" if result and result.ok else (result.error if result else "no_result")
+            if result and result.command:
+                self.io.emit(f"  cmd: {result.command[:300]}")
+            self.io.emit(f"  result: {status}")
+            excerpt = (result.stdout_excerpt or "").strip() if result else ""
+            if excerpt:
+                for line in excerpt.splitlines()[-4:]:
+                    self.io.emit(f"  | {line[:180]}")
             if world.has_root:
                 break
 

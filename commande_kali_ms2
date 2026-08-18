@@ -5,6 +5,7 @@ source .venv/bin/activate
 export PYTHONPATH=.
 export HOME="${HOME:-/home/lade}"
 export AUTOPLAN_LHOST="192.168.0.1"
+export PYTHONUNBUFFERED=1
 
 # Lab plat labo2: kali-1 192.168.0.1 ↔ Metasploit2-1 192.168.0.2 (e1000).
 # vsftpd / Samba / UnrealIRCd. Pas de wpscan/dirb (HTTP n'est pas WordPress).
