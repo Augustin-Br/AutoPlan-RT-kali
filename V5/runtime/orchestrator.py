@@ -441,7 +441,7 @@ class RuntimeOrchestrator:
             if max_actions > 0 and action_index > max_actions:
                 self.io.emit(f"  Reached max_actions={max_actions}.")
                 break
-            if world.has_root:
+            if world.has_root or world.has_shell:
                 break
             decision = choose_next(world, remaining, last_error=world.last_error)
             while decision is None and extra_paths:
@@ -517,7 +517,7 @@ class RuntimeOrchestrator:
             if excerpt:
                 for line in excerpt.splitlines()[-4:]:
                     self.io.emit(f"  | {line[:180]}")
-            if world.has_root:
+            if world.has_root or world.has_shell:
                 break
 
         attempt.reason = (
