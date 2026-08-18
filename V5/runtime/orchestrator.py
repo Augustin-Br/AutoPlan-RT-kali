@@ -591,6 +591,23 @@ class RuntimeOrchestrator:
             target_uri=target_uri,
             skip_wpcheck=skip_wpcheck,
         )
+        if not result.ok and _needs_vsftpd_force(result) and result.command:
+            forced = _with_force_exploit(result.command)
+            if forced != result.command:
+                self.io.emit(
+                    "  Auto-repair: vsftpd bind 6200 already open; retry ForceExploit true"
+                )
+                result = run_step_if_allowed(
+                    step,
+                    self.allowlist,
+                    timeout_seconds=timeout,
+                    allow_auto_exploits=self.config.allow_auto_exploits,
+                    command_override=forced,
+                    credentials=world.credentials or None,
+                    followup_module=None,
+                    target_uri=target_uri,
+                    skip_wpcheck=skip_wpcheck,
+                )
         retries = 0
         max_retries = int(getattr(self.config, "max_step_retries", 2) or 0)
         # WP fingerprint failures get dedicated URI/WPCHECK retries beyond generic repairs.
@@ -729,6 +746,17 @@ def _consume_tool(remaining: list[PathStep], tool: str) -> None:
 def _needs_wp_bypass(result: ExecResult) -> bool:
     blob = f"{result.stdout_excerpt or ''}\n{result.error or ''}".lower()
     return "does not appear to be using wordpress" in blob
+
+
+def _needs_vsftpd_force(result: ExecResult) -> bool:
+    blob = f"{result.stdout_excerpt or ''}\n{result.error or ''}".lower()
+    return "6200" in blob and "already open" in blob
+
+
+def _with_force_exploit(command: str) -> str:
+    if "ForceExploit" in command:
+        return command
+    return command.replace("; run;", "; set ForceExploit true; run;")
 
 
 def _summarize_executed_chain(outcomes: list[StepOutcome]) -> tuple[str, str]:
