@@ -90,10 +90,16 @@ def ingest_result(world: WorldState, command: str | None, result: ExecResult) ->
         world.credentials = list(result.credentials)
         world.add_fact("credential_access")
 
-    if "session opened" in blob or "meterpreter session" in blob:
+    if (
+        "session opened" in blob
+        or "meterpreter session" in blob
+        or "active sessions open" in blob
+        or "uid=0" in blob
+        or "euid=0" in blob
+    ):
         world.has_shell = True
         world.add_fact("shell_access")
-    if "uid=0" in blob or "got root" in blob or "session 2 opened" in blob:
+    if "uid=0" in blob or "euid=0" in blob or "got root" in blob:
         world.has_root = True
         world.add_fact("root_access")
 

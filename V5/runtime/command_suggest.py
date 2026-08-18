@@ -292,7 +292,9 @@ def _msfconsole_command(
         statements.append("set HttpClientTimeout 120")
     if for_auto_exploit:
         statements.append("run")
-        statements.append("exit")
+        statements.append("sessions -l")
+        statements.append("sessions -c id")
+        statements.append("exit -y")
     elif not skip_wpcheck:
         statements.append("check")
     script = "; ".join(statements)

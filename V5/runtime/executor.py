@@ -212,6 +212,16 @@ _MSF_FAIL_MARKERS = (
 )
 
 
+def _msf_indicates_session(blob: str) -> bool:
+    return (
+        "session opened" in blob
+        or "meterpreter session" in blob
+        or "active sessions open" in blob
+        or "uid=0" in blob
+        or "euid=0" in blob
+    )
+
+
 def classify_command_result(
     command: str,
     *,
@@ -229,12 +239,13 @@ def classify_command_result(
     is_msf = "msfconsole" in command_l
     is_aux = "auxiliary/" in command_l
 
+    if is_msf and _msf_indicates_session(blob):
+        return None
+
     if returncode not in {0, None}:
         return f"exit:{returncode}"
 
     if is_msf:
-        if "session opened" in blob or "meterpreter session" in blob:
-            return None
         for marker in _MSF_FAIL_MARKERS:
             if marker in blob:
                 return f"unsuccessful:{marker}"
