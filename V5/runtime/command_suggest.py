@@ -293,6 +293,9 @@ def _msfconsole_command(
     if for_auto_exploit:
         statements.append("run")
         statements.append("sessions -l")
+        # Meterpreter: -C runs a meterpreter command (getuid → "Server username: root").
+        # Shell sessions: -c runs a shell command (id → "uid=0(root)").
+        statements.append("sessions -C getuid")
         statements.append("sessions -c id")
         statements.append("exit -y")
     elif not skip_wpcheck:

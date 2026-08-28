@@ -90,16 +90,36 @@ def ingest_result(world: WorldState, command: str | None, result: ExecResult) ->
         world.credentials = list(result.credentials)
         world.add_fact("credential_access")
 
-    if (
+    session_opened = (
         "session opened" in blob
         or "meterpreter session" in blob
         or "active sessions open" in blob
         or "uid=0" in blob
         or "euid=0" in blob
-    ):
+    )
+    if session_opened:
         world.has_shell = True
         world.add_fact("shell_access")
-    if "uid=0" in blob or "euid=0" in blob or "got root" in blob:
+
+    # Explicit root evidence from shell / Meterpreter getuid.
+    root_evidence = (
+        "uid=0" in blob
+        or "euid=0" in blob
+        or "got root" in blob
+        or "server username: root" in blob
+        or re.search(r"server username:.*\buid=0\b", blob) is not None
+    )
+    # Classic MS2 service exploits grant a root shell/session when they open.
+    # Without this, Meterpreter runs that never print uid=0 leave has_root=False.
+    root_lab_module = any(
+        marker in cmd.lower()
+        for marker in (
+            "vsftpd_234",
+            "usermap_script",
+            "unreal_ircd",
+        )
+    )
+    if root_evidence or (session_opened and root_lab_module):
         world.has_root = True
         world.add_fact("root_access")
 

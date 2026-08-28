@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Demo-oriented AutoPlan-RT on Metasploitable2 (labo2).
+# Faster than commande_kali_ms2: fewer LLM rounds, shorter timeouts, same vsftpd→root path.
+# Prerequisites: wan-gate up, default route, MS2 rebooted (port 6200 closed).
+set -euo pipefail
+cd /home/lade/Documents/AutoPlan-RT-kali
+source .venv/bin/activate
+export PYTHONPATH=.
+export HOME="${HOME:-/home/lade}"
+export AUTOPLAN_LHOST="192.168.0.1"
+export PYTHONUNBUFFERED=1
+
+TARGET_IP="192.168.0.2"
+INFRA="V5/benchmarks/infras/lade_ms2_v5.json"
+
+mkdir -p outputs/ms2
+
+python -m V5.cli \
+  --infra "$INFRA" \
+  --target-ip "$TARGET_IP" \
+  --objective "Authorized lab: obtain foothold/root on Metasploitable2 lab VM" \
+  --execute-recon --recon-level 1 \
+  --scan-tools nmap,curl \
+  --scan-timeout 45 \
+  --recon-max-commands 12 \
+  --recon-max-seconds 90 \
+  --enable-llm --llm-provider google \
+  --no-rag \
+  --max-rounds 2 \
+  --max-consecutive-failures 2 \
+  --strategy balanced --top-k 2 \
+  --runtime-top-k 2 \
+  --execute-paths --auto-execute --allow-auto-exploits \
+  --runtime-timeout 60 \
+  --runtime-exploit-timeout 180 \
+  --output outputs/ms2/v5_agent.json \
+  --runtime-output outputs/ms2/v5_runtime.json \
+  --infra-output outputs/ms2/v5_infra_enriched.json
+
+echo DONE
+python3 -c "
+import json
+from pathlib import Path
+p = Path('outputs/ms2/v5_runtime.json')
+w = json.loads(p.read_text()).get('trace', {}).get('world', {})
+print('DEMO RESULT: shell=%s root=%s stop=%s' % (w.get('has_shell'), w.get('has_root'), w.get('stop_reason')))
+"
